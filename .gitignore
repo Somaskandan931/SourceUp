@@ -1,0 +1,109 @@
+# =========================
+# Maven / Java (kept for future use)
+# =========================
+/target/
+*.class
+*.jar
+*.log
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+
+# =========================
+# Conda / Virtual Environments
+# =========================
+.env
+.venv
+env/
+venv/
+conda-meta/
+
+# =========================
+# IDE files
+# =========================
+*.iml
+.idea/
+.vscode/
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Data artifacts (DO NOT COMMIT)
+# =========================
+data/outputs/
+data/merged/
+data/clean/
+data/embeddings/
+
+# Ignore data files anywhere
+*.csv
+*.xls
+*.xlsx
+
+# Keep folder structure
+!data/**/.gitkeep
+
+# =========================
+# ML / FAISS / Model artifacts
+# =========================
+*.faiss
+*.index
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.onnx
+*.pkl
+
+# =========================
+# Cache
+# =========================
+.cache/
+torch_cache/
+huggingface/
+hf_cache/
+
+# =========================
+# Airflow (if used)
+# =========================
+airflow/logs/
+airflow/__pycache__/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Secrets (CRITICAL)
+# =========================
+*.env
+*.key
+*.pem
+*.json
+
+# =========================
+# Temporary / backup files
+# =========================
+*.tmp
+*.bak
+*.swp
