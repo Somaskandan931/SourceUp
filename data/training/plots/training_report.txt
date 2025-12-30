@@ -1,0 +1,45 @@
+======================================================================
+SourceUP Supplier Ranking - Training Report
+Generated: 2025-12-30 11:21:18
+======================================================================
+
+DATASET INFORMATION
+----------------------------------------------------------------------
+Total samples: 324
+Number of queries: 89
+Average suppliers per query: 3.6
+Relevance score range: [0.00, 5.00]
+Mean relevance: 2.308
+Std relevance: 1.854
+
+FEATURE STATISTICS
+----------------------------------------------------------------------
+price_match              : mean=0.324, std=0.469
+price_ratio              : mean=52.096, std=337.372
+price_distance           : mean=51.639, std=337.289
+location_match           : mean=0.569, std=0.301
+cert_match               : mean=0.262, std=0.306
+years_normalized         : mean=0.494, std=0.329
+is_manufacturer          : mean=0.978, std=0.146
+is_trading_company       : mean=0.475, std=0.500
+faiss_score              : mean=0.773, std=0.100
+faiss_rank               : mean=26.114, std=14.054
+
+MODEL PERFORMANCE
+----------------------------------------------------------------------
+
+LightGBM:
+  Test MSE:    10.3189
+  Test MAE:    2.7660
+  Test NDCG:   0.7639
+
+XGBoost:
+  Test MSE:    10.2857
+  Test MAE:    2.7143
+  Test NDCG:   0.7295
+
+Best Model: XGBoost (lowest MSE)
+
+======================================================================
+All plots saved in: C:/Users/somas/PycharmProjects/SourceUp/data/training/plots
+======================================================================
