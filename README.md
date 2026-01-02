@@ -148,5 +148,4 @@ SourceUp is suitable for:
 ## License
 
 This project is intended for academic, research, and prototyping purposes. Licensing terms can be defined based on future commercialization plans.
-```
 
