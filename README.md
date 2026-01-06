@@ -1,8 +1,3 @@
-Below is a **professionally rewritten and polished `README.md`** in **pure Markdown**, suitable for **GitHub, MSc evaluation, and industry review**.
-No emojis, clear structure, and aligned with your actual architecture and scope.
-
----
-
 # SourceUp – Intelligent Supplier Sourcing Platform for SMEs
 
 SourceUp is an AI-powered B2B sourcing platform designed to simplify and automate supplier discovery and procurement workflows for small and medium enterprises (SMEs), with a primary focus on ASEAN markets such as Singapore, Malaysia, and India.

@@ -566,7 +566,7 @@ def generate_training_report ( df, results, feature_names ) :
             f.write( f"  Test NDCG:   {metrics['test_ndcg']:.4f}\n" )
 
         if results :
-            best_model = min( results.items(), key=lambda x : x[1]['test_mse'] )
+            best_model = max(results.items(), key=lambda x: x[1]['test_ndcg'])
             f.write( f"\nBest Model: {best_model[0]} (lowest MSE)\n" )
 
         f.write( "\n" + "=" * 70 + "\n" )
@@ -580,8 +580,9 @@ def generate_training_report ( df, results, feature_names ) :
 # MODEL TRAINING
 # ============================================================================
 
-def prepare_data ( df: pd.DataFrame ) -> Tuple :
-    """Prepare data for training."""
+def prepare_data(df: pd.DataFrame) -> Tuple:
+    """Prepare data for ranking models (LightGBM & XGBoost) with aligned indices."""
+
     feature_cols = [
         'price_match', 'price_ratio', 'price_distance',
         'location_match', 'cert_match', 'years_normalized',
@@ -589,47 +590,62 @@ def prepare_data ( df: pd.DataFrame ) -> Tuple :
         'faiss_score', 'faiss_rank'
     ]
 
+    # Ensure relevance labels are integer 0-5
+    df = df.copy()
+    df['relevance'] = df['relevance'].round().clip(0, 5).astype(np.int32)
+
     X = df[feature_cols]
-    y = df['relevance'].round().astype(int)
+    y = df['relevance']
     query_ids = df['query_id']
 
-    # Split by query (keep all suppliers from same query together)
-    unique_queries = df['query_id'].unique()
+    # Split by queries (no leakage)
+    unique_queries = query_ids.unique()
     train_queries, test_queries = train_test_split(
         unique_queries,
         test_size=0.2,
         random_state=42
     )
 
-    train_mask = df['query_id'].isin( train_queries )
-    test_mask = df['query_id'].isin( test_queries )
+    train_mask = query_ids.isin(train_queries)
+    test_mask = query_ids.isin(test_queries)
 
-    X_train, y_train = X[train_mask], y[train_mask]
-    X_test, y_test = X[test_mask], y[test_mask]
-    query_train = query_ids[train_mask]
-    query_test = query_ids[test_mask]
+    # 🔥 RESET INDICES to align y, X, and query_ids
+    X_train = X[train_mask].reset_index(drop=True)
+    y_train = y[train_mask].reset_index(drop=True)
+    query_train = query_ids[train_mask].reset_index(drop=True)
 
-    # Group sizes for ranking
+    X_test = X[test_mask].reset_index(drop=True)
+    y_test = y[test_mask].reset_index(drop=True)
+    query_test = query_ids[test_mask].reset_index(drop=True)
+
+    # Group sizes for LightGBM
     train_group = query_train.value_counts().sort_index().values
     test_group = query_test.value_counts().sort_index().values
 
-    return (X_train, y_train, train_group, query_train,
-            X_test, y_test, test_group, query_test, feature_cols)
+    # Factorize queries for XGBoost qid
+    train_qid = pd.factorize(query_train)[0]
+    test_qid = pd.factorize(query_test)[0]
+
+    return (
+        X_train, y_train, train_group, query_train, train_qid,
+        X_test, y_test, test_group, query_test, test_qid,
+        feature_cols
+    )
 
 
-def train_lightgbm ( X_train, y_train, train_group, X_test, y_test, test_group ) :
-    """Train LightGBM ranking model."""
-    if not LGBM_AVAILABLE :
-        return None
+def train_lightgbm(X_train, y_train, train_group,
+                   X_test, y_test, test_group):
+    """Train LightGBM LambdaRank properly."""
 
-    print( "\n" + "=" * 60 )
-    print( "🌳 Training LightGBM Ranker" )
-    print( "=" * 60 )
+    print("\n" + "=" * 60)
+    print("🌳 Training LightGBM Ranker")
+    print("=" * 60)
 
     model = lgb.LGBMRanker(
-        objective='lambdarank',
-        metric='ndcg',
-        n_estimators=150,
+        objective="lambdarank",
+        metric="ndcg",
+        label_gain=[0, 1, 2, 3, 4, 5],  # 🔥 REQUIRED
+        n_estimators=200,
         learning_rate=0.05,
         num_leaves=31,
         max_depth=6,
@@ -645,40 +661,45 @@ def train_lightgbm ( X_train, y_train, train_group, X_test, y_test, test_group )
         group=train_group,
         eval_set=[(X_test, y_test)],
         eval_group=[test_group],
-        eval_metric='ndcg',
+        eval_metric="ndcg@10",
         callbacks=[
-            lgb.early_stopping( stopping_rounds=15, verbose=False ),
-            lgb.log_evaluation( period=20 )
+            lgb.early_stopping(15, verbose=False),
+            lgb.log_evaluation(20)
         ]
     )
 
     return model
 
 
-def train_xgboost ( X_train, y_train, train_group, X_test, y_test, test_group ) :
-    """Train XGBoost ranking model."""
-    if not XGB_AVAILABLE :
-        return None
 
-    print( "\n" + "=" * 60 )
-    print( "🚀 Training XGBoost Ranker" )
-    print( "=" * 60 )
+def train_xgboost(X_train, y_train, train_group,
+                  X_test, y_test, test_group):
+    """Train XGBoost Ranker properly."""
+
+    print("\n" + "=" * 60)
+    print("🚀 Training XGBoost Ranker")
+    print("=" * 60)
 
     model = xgb.XGBRanker(
-        objective='rank:ndcg',
-        n_estimators=150,
+        objective="rank:ndcg",
+        eval_metric="ndcg@10",
+        n_estimators=200,
         learning_rate=0.05,
         max_depth=6,
-        min_child_weight=15,
+        min_child_weight=10,
         subsample=0.8,
         colsample_bytree=0.8,
-        random_state=42,
-        tree_method='hist'
+        tree_method="hist",
+        random_state=42
     )
 
-    # Create group arrays (start and end positions for each query)
-    train_qid = np.repeat( range( len( train_group ) ), train_group )
-    test_qid = np.repeat( range( len( test_group ) ), test_group )
+    # 🔥 Correct qid construction
+    train_qid = np.repeat(
+        np.arange(len(train_group)), train_group
+    )
+    test_qid = np.repeat(
+        np.arange(len(test_group)), test_group
+    )
 
     model.fit(
         X_train, y_train,
@@ -689,6 +710,8 @@ def train_xgboost ( X_train, y_train, train_group, X_test, y_test, test_group ) 
     )
 
     return model
+
+
 
 
 def evaluate_model ( model, X_train, y_train, query_train, X_test, y_test, query_test, model_name: str ) :
@@ -719,19 +742,34 @@ def evaluate_model ( model, X_train, y_train, query_train, X_test, y_test, query
     # Feature importance
     if hasattr( model, 'feature_importances_' ) :
         print( "\n🎯 Top 5 Features:" )
+
         feature_names = [
             'price_match', 'price_ratio', 'price_distance',
             'location_match', 'cert_match', 'years_normalized',
             'is_manufacturer', 'is_trading_company',
             'faiss_score', 'faiss_rank'
         ]
-        importance_df = pd.DataFrame( {
-            'feature' : feature_names,
-            'importance' : model.feature_importances_
-        } ).sort_values( 'importance', ascending=False )
+
+        if model_name == "LightGBM" :
+            importance = model.feature_importances_
+            importance_df = pd.DataFrame( {
+                'feature' : feature_names,
+                'importance' : importance
+            } )
+
+        elif model_name == "XGBoost" :
+            booster = model.get_booster()
+            score = booster.get_score( importance_type='gain' )
+
+            importance_df = pd.DataFrame( [
+                (feature_names[int( k[1 :] )], v)
+                for k, v in score.items()
+            ], columns=['feature', 'importance'] )
+
+        importance_df = importance_df.sort_values( 'importance', ascending=False )
 
         for _, row in importance_df.head( 5 ).iterrows() :
-            print( f"   {row['feature']:20s}: {row['importance']:.2f}" )
+            print( f"   {row['feature']:20s}: {row['importance']:.4f}" )
 
     return {
         'test_mse' : test_mse,
@@ -765,107 +803,119 @@ def save_model ( model, path: str, model_name: str ) :
 # MAIN TRAINING PIPELINE
 # ============================================================================
 
-def main () :
-    """Main training pipeline with visualization."""
-    print( "=" * 70 )
-    print( "🤖 SourceUP Supplier Ranking - Model Training with Visualization" )
-    print( "=" * 70 )
+def main():
+    """Main training pipeline with visualization (LightGBM & XGBoost)."""
+    print("=" * 70)
+    print("🤖 SourceUP Supplier Ranking - Model Training with Visualization")
+    print("=" * 70)
 
-    # Load data
-    df = load_or_generate_data()
-    print( f"\n📊 Dataset: {len( df )} samples, {df['query_id'].nunique()} queries" )
-
-    # Plot data distribution
-    print( "\n📈 Generating data distribution plots..." )
-    plot_data_distribution( df )
-
-    # Prepare data
-    (X_train, y_train, train_group, query_train,
-     X_test, y_test, test_group, query_test, feature_cols) = prepare_data( df )
-
-    print( f"📈 Training: {len( X_train )} samples, {len( np.unique( query_train ) )} queries" )
-    print( f"📉 Testing: {len( X_test )} samples, {len( np.unique( query_test ) )} queries" )
-
-    # Train models
+    # ✅ REQUIRED: initialize containers
     results = {}
     models = {}
 
-    if LGBM_AVAILABLE :
-        lgbm_model = train_lightgbm( X_train, y_train, train_group, X_test, y_test, test_group )
-        if lgbm_model :
-            results['LightGBM'] = evaluate_model(
-                lgbm_model, X_train, y_train, query_train,
-                X_test, y_test, query_test, 'LightGBM'
-            )
-            models['LightGBM'] = lgbm_model
+    # ------------------------------------------------------------------
+    # Load or generate training data
+    # ------------------------------------------------------------------
+    df = load_or_generate_data()
+    print(f"\n📊 Dataset: {len(df)} samples, {df['query_id'].nunique()} queries")
 
-    if XGB_AVAILABLE :
-        xgb_model = train_xgboost( X_train, y_train, train_group, X_test, y_test, test_group )
-        if xgb_model :
-            results['XGBoost'] = evaluate_model(
-                xgb_model, X_train, y_train, query_train,
-                X_test, y_test, query_test, 'XGBoost'
-            )
-            models['XGBoost'] = xgb_model
+    # Plot data distribution
+    print("\n📈 Generating data distribution plots...")
+    plot_data_distribution(df)
 
-    # Generate visualizations
-    if results :
-        print( "\n📊 Generating visualization plots..." )
+    # ------------------------------------------------------------------
+    # Prepare data for ranking
+    # ------------------------------------------------------------------
+    (
+        X_train, y_train, train_group, query_train, train_qid,
+        X_test, y_test, test_group, query_test, test_qid,
+        feature_cols
+    ) = prepare_data(df)
 
-        # Feature importance comparison
-        lgbm_m = models.get( 'LightGBM' )
-        xgb_m = models.get( 'XGBoost' )
-        plot_feature_importance_comparison( lgbm_m, xgb_m, feature_cols )
+    print(f"📈 Training: {len(X_train)} samples, {query_train.nunique()} queries")
+    print(f"📉 Testing:  {len(X_test)} samples, {query_test.nunique()} queries")
 
-        # Predictions vs actual
-        plot_predictions_vs_actual( models, X_test, y_test, query_test )
+    # ------------------------------------------------------------------
+    # Train LightGBM
+    # ------------------------------------------------------------------
+    if LGBM_AVAILABLE:
+        lgbm_model = train_lightgbm(
+            X_train, y_train, train_group,
+            X_test, y_test, test_group
+        )
 
-        # Residuals
-        plot_residuals( models, X_test, y_test )
+        results['LightGBM'] = evaluate_model(
+            lgbm_model,
+            X_train, y_train, query_train,
+            X_test, y_test, query_test,
+            'LightGBM'
+        )
+        models['LightGBM'] = lgbm_model
 
-        # Model comparison
-        plot_model_comparison( results )
+    # ------------------------------------------------------------------
+    # Train XGBoost
+    # ------------------------------------------------------------------
+    if XGB_AVAILABLE:
+        xgb_model = train_xgboost(
+            X_train, y_train, train_group,
+            X_test, y_test, test_group
+        )
 
-        # Learning curves
-        plot_learning_curves( lgbm_m, xgb_m )
+        results['XGBoost'] = evaluate_model(
+            xgb_model,
+            X_train, y_train, query_train,
+            X_test, y_test, query_test,
+            'XGBoost'
+        )
+        models['XGBoost'] = xgb_model
 
-        # Ranking quality
-        plot_ranking_quality( models, X_test, y_test, query_test )
+    # ------------------------------------------------------------------
+    # Visualizations & Reporting
+    # ------------------------------------------------------------------
+    if results:
+        print("\n📊 Generating visualization plots...")
 
-        # Generate report
-        generate_training_report( df, results, feature_cols )
+        plot_feature_importance_comparison(
+            models.get('LightGBM'),
+            models.get('XGBoost'),
+            feature_cols
+        )
+        plot_predictions_vs_actual(models, X_test, y_test, query_test)
+        plot_residuals(models, X_test, y_test)
+        plot_model_comparison(results)
+        plot_learning_curves(
+            models.get('LightGBM'),
+            models.get('XGBoost')
+        )
+        plot_ranking_quality(models, X_test, y_test, query_test)
 
-        print( "\n" + "=" * 70 )
-        print( "🏆 Model Comparison" )
-        print( "=" * 70 )
+        generate_training_report(df, results, feature_cols)
 
-        comparison_df = pd.DataFrame( results ).T
-        print( comparison_df.to_string() )
+        # Save models
+        if 'LightGBM' in models:
+            save_model(models['LightGBM'], LGBM_MODEL_PATH, 'LightGBM')
+        if 'XGBoost' in models:
+            save_model(models['XGBoost'], XGB_MODEL_PATH, 'XGBoost')
 
-        # Save both models
-        if 'LightGBM' in models :
-            save_model( models['LightGBM'], LGBM_MODEL_PATH, 'LightGBM' )
+        # Final comparison
+        print("\n🏆 Model Comparison")
+        print("=" * 70)
+        comparison_df = pd.DataFrame(results).T
+        print(comparison_df.to_string())
 
-        if 'XGBoost' in models :
-            save_model( models['XGBoost'], XGB_MODEL_PATH, 'XGBoost' )
+        best_model = max(results.items(), key=lambda x: x[1]['test_ndcg'])
+        print(
+            f"\n🏆 Best Model: {best_model[0]} "
+            f"(Test NDCG@10: {best_model[1]['test_ndcg']:.4f})"
+        )
 
-        # Recommendation
-        best_model = min( results.items(), key=lambda x : x[1]['test_mse'] )
-        print( f"\n🎯 Best Model: {best_model[0]} (Test MSE: {best_model[1]['test_mse']:.4f})" )
+        print("\n✅ Training Complete!")
+        print(f"\n📊 All plots saved in: {PLOTS_DIR}")
 
-        print( "\n" + "=" * 70 )
-        print( "✅ Training Complete!" )
-        print( "=" * 70 )
-        print( f"\n📊 All plots saved in: {PLOTS_DIR}" )
-        print( "\n💡 Next Steps:" )
-        print( "   1. Review plots in: data/training/plots/" )
-        print( "   2. Restart FastAPI: uvicorn backend.app.main:app --reload" )
-        print( "   3. Test endpoint: /recommend?query=biodegradable containers" )
-        print( "   4. Collect real user data to retrain models" )
-        print( f"   5. Models saved in: {MODELS_DIR}" )
-    else :
-        print( "\n❌ No models were trained. Install LightGBM or XGBoost." )
+    else:
+        print("\n❌ No models were trained. Ensure LightGBM or XGBoost is installed.")
 
 
-if __name__ == "__main__" :
+
+if __name__ == "__main__":
     main()

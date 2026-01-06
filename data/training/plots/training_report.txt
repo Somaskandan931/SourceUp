@@ -1,6 +1,6 @@
 ======================================================================
 SourceUP Supplier Ranking - Training Report
-Generated: 2025-12-30 11:21:18
+Generated: 2026-01-06 20:10:31
 ======================================================================
 
 DATASET INFORMATION
@@ -29,16 +29,16 @@ MODEL PERFORMANCE
 ----------------------------------------------------------------------
 
 LightGBM:
-  Test MSE:    10.3189
-  Test MAE:    2.7660
-  Test NDCG:   0.7639
+  Test MSE:    10.0806
+  Test MAE:    2.7067
+  Test NDCG:   0.7439
 
 XGBoost:
   Test MSE:    10.2857
   Test MAE:    2.7143
   Test NDCG:   0.7295
 
-Best Model: XGBoost (lowest MSE)
+Best Model: LightGBM (lowest MSE)
 
 ======================================================================
 All plots saved in: C:/Users/somas/PycharmProjects/SourceUp/data/training/plots
