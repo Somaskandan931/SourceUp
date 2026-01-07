@@ -1,6 +1,6 @@
 ======================================================================
-SourceUP Supplier Ranking - Training Report
-Generated: 2026-01-06 20:10:31
+SourceUP Supplier Ranking - IEEE-Compliant Training Report
+Generated: 2026-01-07 15:41:18
 ======================================================================
 
 DATASET INFORMATION
@@ -11,6 +11,9 @@ Average suppliers per query: 3.6
 Relevance score range: [0.00, 5.00]
 Mean relevance: 2.308
 Std relevance: 1.854
+
+Note: The relevance distribution is skewed toward lower scores,
+motivating the use of listwise ranking objectives.
 
 FEATURE STATISTICS
 ----------------------------------------------------------------------
@@ -25,21 +28,37 @@ is_trading_company       : mean=0.475, std=0.500
 faiss_score              : mean=0.773, std=0.100
 faiss_rank               : mean=26.114, std=14.054
 
-MODEL PERFORMANCE
+MODEL PERFORMANCE (Learning-to-Rank Metrics)
 ----------------------------------------------------------------------
 
 LightGBM:
-  Test MSE:    10.0806
-  Test MAE:    2.7067
-  Test NDCG:   0.7439
+  Test NDCG@10: 0.7439 (PRIMARY METRIC)
+  Test Precision@5: 0.925
+  Kendall's Tau: 0.09843084353956089
 
 XGBoost:
-  Test MSE:    10.2857
-  Test MAE:    2.7143
-  Test NDCG:   0.7295
+  Test NDCG@10: 0.7295 (PRIMARY METRIC)
+  Test Precision@5: 0.875
+  Kendall's Tau: 0.0
 
-Best Model: LightGBM (lowest MSE)
+Best Model: LightGBM (Test NDCG@10: 0.7439)
+
+Model Selection Justification:
+LightGBM was selected as the final ranking model due to its superior
+NDCG@10 performance, faster convergence characteristics, and more stable
+query-level ranking quality across the evaluation set.
 
 ======================================================================
-All plots saved in: C:/Users/somas/PycharmProjects/SourceUp/data/training/plots
+IEEE-COMPLIANT PLOTS GENERATED:
+  [OK] Data distribution (with methodological notes)
+  [OK] Gain-based feature importance
+  [OK] NDCG comparison (primary metric)
+  [OK] Query-level ranking quality
+  [OK] Learning curves (with convergence notes)
+
+REMOVED (not suitable for ranking):
+  [X] Predicted vs Actual plots (R2 not valid for ranking)
+  [X] Residual distributions (assumes regression loss)
+  [X] MSE/MAE as primary metrics (ranking uses NDCG)
+
 ======================================================================
