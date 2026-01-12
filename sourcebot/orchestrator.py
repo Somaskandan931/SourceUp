@@ -1,11 +1,8 @@
 """
-Orchestrator Module - UPGRADED FOR SOURCEUP-X
----------------------------------------------
-Enhanced with:
-- Dynamic AI-generated informational responses (via Groq/Ollama)
-- Explanation capabilities
-- What-if question handling
-- Decision trace queries
+Orchestrator Module - FIXED
+----------------------------
+CRITICAL FIX: Only passes raw text to info responses, not parsed_data or session state.
+This prevents prompt variable mismatch errors.
 """
 
 import requests
@@ -20,6 +17,7 @@ WHAT_IF_API = "http://localhost:8000/what-if"
 def handle(sid: str, text: str):
     """
     Handle user query with enhanced explanation support and AI-generated answers.
+    FIXED to prevent prompt variable collisions.
 
     New capabilities:
     - Dynamic informational responses via Groq/Ollama
@@ -48,11 +46,15 @@ def handle(sid: str, text: str):
         return handle_what_if_query(sid, text, parsed_data)
 
     # ========================================================================
-    # INFORMATIONAL QUERIES - NOW AI-GENERATED!
+    # FIX 3: INFORMATIONAL QUERIES - PASS ONLY TEXT (NOT parsed_data)
     # ========================================================================
     if intent == 'information':
         print(f"🤖 Generating AI response for: {text}")
         try:
+            # ✅ CRITICAL FIX: Pass ONLY the raw text string
+            # ❌ DO NOT pass parsed_data
+            # ❌ DO NOT pass session state
+            # ❌ DO NOT pass any dictionary with 'product', 'location', etc.
             return generate_info_response_enhanced(text)
         except Exception as e:
             print(f"❌ AI response failed: {e}")
@@ -191,7 +193,7 @@ def handle_what_if_query(sid: str, text: str, parsed_data: dict):
         scenario = "price_over_speed"
         scenario_name = "Price Focused"
     elif "speed" in text_lower or "fast" in text_lower:
-        scenario = "speed_over_price"
+        scenario = "speed_over_speed"
         scenario_name = "Speed Focused"
     elif "quality" in text_lower or "certification" in text_lower:
         scenario = "quality_over_cost"

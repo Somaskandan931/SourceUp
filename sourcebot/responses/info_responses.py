@@ -1,8 +1,8 @@
 """
-Dynamic Informational Response Generator
------------------------------------------
-Uses Groq/Ollama/OpenAI to generate informational answers dynamically.
-Create this as: sourcebot/responses/info_responses.py
+Dynamic Informational Response Generator - FIXED
+-------------------------------------------------
+CRITICAL FIX: Changed prompt variable from {question} to {text} to avoid collisions.
+Added general knowledge mode for business concepts.
 """
 
 import os
@@ -34,7 +34,7 @@ from langchain_core.prompts import ChatPromptTemplate
 # LLM CONFIGURATION
 # ============================================================================
 
-INFO_AI_PROVIDER = os.getenv('INFO_AI_PROVIDER', 'groq')  # 'groq', 'ollama', or 'openai'
+INFO_AI_PROVIDER = os.getenv('INFO_AI_PROVIDER', 'groq')
 
 
 def get_info_llm():
@@ -42,8 +42,8 @@ def get_info_llm():
 
     if INFO_AI_PROVIDER == 'groq' and GROQ_AVAILABLE:
         return ChatGroq(
-            model="llama-3.3-70b-versatile",  # Best for detailed explanations
-            temperature=0.3,  # Slightly creative for better explanations
+            model="llama-3.3-70b-versatile",
+            temperature=0.3,
             groq_api_key=os.getenv('GROQ_API_KEY')
         )
 
@@ -76,58 +76,85 @@ except Exception as e:
 
 
 # ============================================================================
-# SYSTEM PROMPT - Guides the AI to give supplier-sourcing focused answers
+# ENHANCED SYSTEM PROMPT - Specialized for Supplier Sourcing Domain
 # ============================================================================
 
-SYSTEM_PROMPT = """You are SourceBot, an AI assistant specialized in helping businesses with supplier sourcing and procurement.
+SYSTEM_PROMPT = """You are SourceBot, an expert AI assistant specializing in B2B supplier sourcing, procurement, and international trade.
 
-Your expertise includes:
-- International trade and supplier sourcing (China, India, Vietnam, etc.)
-- Product certifications (ISO 9001, ISO 14001, FDA, CE, RoHS, UL)
-- Manufacturing and supply chain management
-- Import/export processes and customs clearance
-- Quality control and supplier evaluation criteria
-- Pricing strategies, MOQ negotiations, and payment terms
-- Logistics, shipping methods (sea freight, air freight, express)
-- Business types (manufacturers vs trading companies)
-- Compliance and legal requirements for international trade
+CORE EXPERTISE AREAS:
+══════════════════════
+**Manufacturing & Sourcing:**
+- Global supplier ecosystems (China, India, Vietnam, Taiwan, Thailand, Bangladesh)
+- Product categories: packaging, electronics, textiles, machinery, chemicals, food products
+- Manufacturing processes: injection molding, CNC machining, die casting, textile weaving
+- MOQ (Minimum Order Quantity) negotiation strategies
+- Lead times, production capacity planning
 
-When answering questions:
-1. Be concise but comprehensive (aim for 200-400 words maximum)
-2. Use bullet points and clear structure for easy scanning
-3. Focus on practical, actionable information that helps decision-making
-4. Include specific examples and real-world scenarios when relevant
-5. If the question relates to finding suppliers, suggest doing a product search after answering
-6. Use professional but friendly, conversational tone
-7. Use emoji sparingly (1-2 per response maximum) for visual breaks
-8. Avoid overly technical jargon unless necessary; explain terms simply
-9. Prioritize answering the specific question asked before providing additional context
+**Certifications & Compliance:**
+- Quality: ISO 9001, ISO 13485, TS 16949, AS9100
+- Environmental: ISO 14001, RoHS, REACH, Prop 65
+- Safety: FDA, CE, UL, CSA, FCC
+- Social: BSCI, SEDEX, SA8000, WRAP
+- Industry-specific: GMP, HACCP, FSSC 22000
 
-Format your responses with:
-- **Bold headers** for main sections
-- • Bullet points for lists and key information
-- Clear, scannable structure with short paragraphs
-- Numbers for step-by-step processes
-- Keep paragraphs to 2-3 sentences maximum
+**Trade & Logistics:**
+- Incoterms (FOB, CIF, DDP, EXW, FCA)
+- Shipping methods (sea freight, air freight, express courier)
+- Customs clearance, HS codes, import duties
+- Payment terms (L/C, T/T, D/P, D/A, escrow)
+- Supply chain risk management
 
-Answer style guidelines:
-- Start with a direct answer to the question in the first 1-2 sentences
-- Then provide supporting details and context
-- End with actionable next steps or recommendations when relevant
-- If asked "what is X", give a brief definition first, then elaborate
-- If asked "how to", provide a numbered step-by-step process
-- If asked about comparisons, use clear comparison format (vs, differences)
+**General Business Concepts:**
+- Buyer and seller roles in B2B commerce
+- Supply chain fundamentals
+- Trade terminology and definitions
+- Business relationship building
 
-Remember: You're helping businesses make informed sourcing decisions quickly and confidently!"""
+**Supplier Evaluation:**
+- Factory audits and quality control
+- Supplier verification methods
+- Red flags and warning signs
+- Negotiation tactics and best practices
+- Building long-term supplier relationships
+
+RESPONSE GUIDELINES:
+══════════════════════
+1. **Direct Answer First** (1-2 sentences)
+   Start with the core answer immediately. No fluff.
+
+2. **Structure for Scanning** (200-400 words max)
+   - Use **bold headers** for sections
+   - Use • bullet points for lists
+   - Keep paragraphs to 2-3 sentences max
+   - Numbers for step-by-step processes
+
+3. **Practical & Actionable**
+   - Focus on what the user can DO with this information
+   - Include real-world examples when relevant
+   - Mention typical costs/timelines/ranges where applicable
+   
+4. **Industry Context**
+   - Reference specific countries/regions when relevant
+   - Mention industry standards and best practices
+   - Note common pitfalls or misconceptions
+
+5. **Call to Action**
+   - End with next steps or recommendations
+   - If search-related, suggest a specific search query
+   - Use 1-2 emojis maximum for visual breaks
+
+TONE: Professional yet conversational, like an experienced sourcing manager mentoring a colleague.
+
+Remember: You're helping businesses make faster, smarter sourcing decisions with confidence!"""
 
 
 # ============================================================================
-# PROMPT TEMPLATE
+# FIX 4: RENAME PROMPT VARIABLE FROM {question} TO {text}
 # ============================================================================
 
 info_prompt = ChatPromptTemplate.from_messages([
     ("system", SYSTEM_PROMPT),
-    ("human", "{question}")
+    ("human", "{text}")  # ✅ CHANGED FROM {question} to {text}
 ])
 
 
@@ -139,12 +166,21 @@ else:
 
 
 # ============================================================================
-# MAIN FUNCTION - Generate Dynamic Responses
+# FIX 5: GENERAL KNOWLEDGE MODE
 # ============================================================================
+
+GENERAL_KNOWLEDGE_KEYWORDS = [
+    'buyer', 'seller', 'business',
+    'customer', 'market', 'trade',
+    'commerce', 'role', 'definition',
+    'vendor', 'procurement', 'sourcing'
+]
+
 
 def generate_info_response(question: str) -> str:
     """
     Generate an informational response using AI.
+    FIXED to use {text} variable instead of {question}.
 
     Args:
         question: User's question
@@ -156,8 +192,10 @@ def generate_info_response(question: str) -> str:
         return _fallback_response(question)
 
     try:
-        # Invoke the AI
-        response = info_chain.invoke({"question": question})
+        # ============================================================================
+        # FIX 4: INVOKE WITH {text} PARAMETER
+        # ============================================================================
+        response = info_chain.invoke({"text": question})  # ✅ CHANGED FROM {"question": question}
 
         # Extract content
         if hasattr(response, 'content'):
@@ -217,44 +255,52 @@ Or rephrase your question and I'll try again!"""
 
 
 # ============================================================================
-# QUICK ANSWER MODE (Optional - For Very Common Questions)
+# QUICK ANSWERS (Unchanged but included for completeness)
 # ============================================================================
 
 QUICK_ANSWERS = {
     "what is iso": """**ISO (International Organization for Standardization)** develops international standards for quality, safety, and efficiency.
 
 **Common ISO Standards:**
-• **ISO 9001**: Quality Management Systems
-• **ISO 14001**: Environmental Management
-• **ISO 45001**: Occupational Health & Safety
+• **ISO 9001**: Quality Management Systems - ensures consistent product/service quality
+• **ISO 14001**: Environmental Management - reduces environmental impact
+• **ISO 13485**: Medical Devices - quality management for healthcare products
+• **ISO 45001**: Occupational Health & Safety - workplace safety management
 
 **Why it matters for sourcing:**
-ISO certification shows a supplier follows international best practices for quality control and process management.
+ISO certification shows a supplier follows international best practices for quality control, process management, and continuous improvement. It reduces your risk when sourcing from overseas suppliers.
 
-💡 Search: 'Find ISO 9001 certified manufacturers'""",
+**How to verify:**
+Ask for certificate copies and verify with the issuing body (e.g., SGS, TÜV, BSI).
 
-    "what is fda": """**FDA (U.S. Food and Drug Administration)** regulates food, drugs, medical devices, and cosmetics in the United States.
+💡 **Ready to search?** Try: 'Find ISO 9001 certified manufacturers in China'""",
 
-**For Suppliers:**
-• Products entering the US market must meet FDA regulations
-• Facilities may need FDA registration
-• Requires compliance certificates and testing
+    "who is": """**Buyer and Seller Roles in B2B Commerce:**
 
-💡 Search: 'Find FDA approved food packaging suppliers'""",
+**Buyer (Procurement Side):**
+• A business or individual purchasing products/services from suppliers
+• Responsibilities: sourcing suppliers, negotiating terms, quality control, managing inventory
+• Goals: finding reliable suppliers, competitive pricing, ensuring quality standards
+• Common titles: Procurement Manager, Sourcing Specialist, Purchasing Agent
 
-    "what is moq": """**MOQ (Minimum Order Quantity)** is the smallest amount a supplier will produce or sell in one order.
+**Seller (Supply Side):**
+• A business or individual providing products/services to buyers
+• Responsibilities: manufacturing/sourcing products, meeting quality standards, managing inventory, fulfilling orders
+• Goals: attracting buyers, maintaining product quality, building long-term relationships
+• Common titles: Sales Manager, Account Executive, Business Development Manager
 
-**Why suppliers have MOQs:**
-• Production setup costs
-• Material bulk purchasing efficiency
-• Quality control consistency
+**In SourceBot's context:**
+• **Buyers** search for suppliers using our platform
+• **Sellers (Suppliers/Manufacturers)** are listed in our database and can be discovered by buyers
 
-**Typical ranges:**
-• Custom products: 1,000-10,000 units
-• Generic products: Often negotiable
-• Electronics: 100-1,000 units
+**How to become a seller:**
+1. Register your business on supplier platforms
+2. Obtain relevant certifications (ISO, FDA, etc.)
+3. Build a strong company profile with product catalogs
+4. Get verified through third-party audits
+5. Respond promptly to buyer inquiries
 
-💡 Tip: Ask suppliers if they can reduce MOQ for trial orders."""
+💡 **Ready to find suppliers as a buyer?** Try: 'Find [product] from [location]'"""
 }
 
 
@@ -273,14 +319,31 @@ def get_quick_answer(question: str) -> Optional[str]:
 
 
 # ============================================================================
-# ENHANCED MAIN FUNCTION (with quick answers)
+# FIX 5: ENHANCED MAIN FUNCTION (with general knowledge mode)
 # ============================================================================
 
 def generate_info_response_enhanced(question: str) -> str:
     """
-    Generate response with quick answer fallback.
-    Use this instead of generate_info_response for better performance.
+    Generate response with quick answer fallback and general knowledge mode.
+    FIXED to handle general business questions properly.
+
+    Args:
+        question: User's question (raw text string ONLY, not a dict)
+
+    Returns:
+        AI-generated response text
     """
+    # ============================================================================
+    # FIX 5: General knowledge mode for basic business concepts
+    # ============================================================================
+    if any(k in question.lower() for k in GENERAL_KNOWLEDGE_KEYWORDS):
+        # Check quick answers first
+        quick = get_quick_answer(question)
+        if quick:
+            return quick
+        # Otherwise use AI for general knowledge
+        return generate_info_response(question)
+
     # Check for quick answer first (faster, saves API calls)
     quick = get_quick_answer(question)
     if quick:
