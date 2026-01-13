@@ -450,9 +450,3 @@ simulation = response.json()
 - **Groq** for high-performance LLM inference
 
 ---
-
-
-
-**Built with ❤️ for MSMEs worldwide.**
-
-[![Star on GitHub](https://img.shields.io/github/stars/yourusername/SourceUp?style=social)](https://github.com/yourusername/SourceUp)
