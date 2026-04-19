@@ -1,154 +1,150 @@
-SourceUp
-Constraint-Aware Explainable AI Framework for SME Supplier Selection
-Overview
+# SourceUp
+### Constraint-Aware Explainable AI for Supplier Selection
 
-SourceUp is an AI-powered supplier sourcing system designed for small and medium enterprises (SMEs). It combines semantic search, machine learning, and explainability to improve supplier discovery and procurement decision-making.
+> AI-powered decision support for SMEs  replacing rigid filtering with constraint-aware ranking and transparent, explainable decisions.
 
-Unlike traditional sourcing platforms that rely on keyword matching or rule-based filtering, SourceUp models supplier selection as a constraint-aware ranking problem, where factors such as budget, delivery time, and supplier reliability are integrated directly into the ranking process.
+---
 
-The system is designed both as a functional platform and as a research framework for explainable AI in decision support systems.
+## Why SourceUp?
 
-Key Idea
+Traditional sourcing platforms fall short in predictable ways:
 
-Traditional pipeline:
+| Problem | SourceUp Solution |
+|---|---|
+| Keyword filtering only | Semantic, intent-aware retrieval |
+| No trade-off visibility | Multi-factor constraint optimization |
+| Black-box decisions | Explainable ranking with feature contributions |
 
-Filter → Rank
+Built to solve a real problem: helping SMEs choose cost-effective, reliable suppliers under real-world constraints.
 
-SourceUp approach:
+---
 
-Constraint-Aware Ranking
-Score(q,d)=f
-θ
-	​
+## Core Innovation
 
-(q,d)−γ⋅ConstraintViolation(d,C)
+SourceUp moves beyond *filter-then-rank* by directly optimizing:
 
-Where:
-
-q = user query
-d = supplier
-C = constraints (budget, delivery, etc.)
-fθ = learned ranking model
-γ = penalty weight
+$$\text{Score}(q, d) = f_\theta(q, d) - \gamma \cdot \text{ConstraintViolation}(d, C)$$
 
 This enables:
+- **Trade-off reasoning** across price, delivery time, and reliability
+- **Soft constraint handling**  penalization instead of rigid exclusion
+- **Transparent ranking**  every decision is explainable
 
-Constraint-aware recommendations
-Trade-off modeling between cost, delivery, and quality
-Explainable supplier selection
-Features
-Semantic supplier search using embeddings (SBERT + FAISS)
-Constraint-aware ranking (budget, delivery, feasibility)
-Explainable recommendations with decision traces
-Conversational interface for natural language queries
-Automated supplier data collection via scraping pipelines
-Modular architecture for research and experimentation
-System Architecture
-Scraped Supplier Data
-        ↓
-Data Processing & Feature Engineering
-        ↓
-Semantic Retrieval (FAISS)
-        ↓
-Ranking Engine (Constraint-Aware LTR)
-        ↓
-Explainability Layer
-        ↓
-API / SourceBot Interface
-Modules
-1. Data Collection
-Web scraping from B2B platforms (IndiaMART, GlobalSources)
-Structured CSV dataset generation
-Data cleaning and normalization
-2. Feature Engineering Pipeline
-Price normalization
-Supplier reliability scoring
-Delivery estimation (proxy features)
-Constraint feasibility flags
-3. Supplier Recommendation Engine
-Semantic search using embeddings
-Learning-to-Rank (planned: LightGBM / LambdaRank)
-Constraint-aware scoring
-4. Explainability Layer
-Feature-level contribution analysis
-Trade-off insights (cost vs delivery vs rating)
-Decision trace for ranking comparisons
-5. SourceBot (Conversational Interface)
-Natural language query handling
-Constraint extraction
-Session-based interaction
-6. Simulation & Evaluation
-What-if analysis
-Constraint sensitivity testing
-Ranking stability experiments
-Tech Stack
-Backend: FastAPI (Python)
-ML: Sentence Transformers, FAISS, Scikit-learn
-Ranking (planned): LightGBM / XGBoost
-Scraping: Java (Jsoup) + Python pipelines
-Conversational AI: LangChain + OpenAI API
-Storage: CSV (PostgreSQL-ready)
-Frontend: Streamlit
-Example Use Case
+---
 
-Input:
+## System Architecture
+
+```
+Scraper  Feature Engineering  Semantic Search (FAISS)
+         Constraint-Aware Ranking  Explainability Layer  API / SourceBot
+```
+
+---
+
+## Key Features
+
+### Semantic Search
+SBERT embeddings + FAISS index for high-quality supplier retrieval that understands query intent, not just keywords.
+
+### Constraint-Aware Ranking
+Budget, delivery windows, and feasibility constraints are integrated directly into the scoring function  not applied as post-hoc filters.
+
+### Explainable AI Layer
+- Feature contribution breakdowns per supplier
+- Trade-off explanations (why Supplier A ranks above Supplier B)
+- Human-readable decision rationale
+
+### SourceBot (Conversational Interface)
+Natural language queries are parsed into structured constraints via LangChain + LLM, enabling non-technical users to interact without knowing query syntax.
+
+### Automated Data Pipeline
+End-to-end scraping, cleaning, and feature engineering  from raw web data to model-ready supplier records.
+
+---
+
+## Example
+
+**Query:**
+```
 "Need disposable food containers under ₹5 with fast delivery"
+```
 
-System Output:
+**Output:** Ranked supplier list with explanations
 
-Ranked suppliers based on relevance + constraints
-Explanation:
-Supplier A ranked higher due to lower price and better rating
-Supplier B penalized due to delivery delay
-Research Alignment
+| Supplier | Score | Explanation |
+|---|---|---|
+| Supplier A | 0.91 | Low unit price + high reliability rating |
+| Supplier B | 0.74 | Penalized for estimated delivery delay |
+| Supplier C | 0.61 | Budget exceeded soft constraint threshold |
 
-This project explores:
+---
 
-Constraint-aware recommendation systems
-Explainable AI in decision support
-Learning-to-Rank for structured decision problems
-Trade-offs between feasibility and relevance
-Current Status
-Scraping pipeline: Implemented
-Semantic retrieval: Implemented
-Feature engineering: In progress
-Ranking model: In progress
-Experimental evaluation: Planned
-Future Work
-Full Learning-to-Rank integration
-Fairness-aware ranking
-Reinforcement learning for adaptive recommendations
-Multilingual support
-Cloud deployment (Docker + Kubernetes)
-Getting Started
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend API | FastAPI |
+| Semantic Search | Sentence Transformers (SBERT) + FAISS |
+| Ranking Model | LightGBM / XGBoost *(planned)* |
+| Scraping | Java (Jsoup) + Python |
+| LLM / Chatbot | LangChain + OpenAI API |
+| Frontend | Streamlit |
+| ML Utilities | Scikit-learn |
+
+---
+
+## Project Status
+
+- [x] Data scraping pipeline
+- [x] Semantic retrieval system (SBERT + FAISS)
+- [ ] Feature engineering *(in progress)*
+- [ ] Learning-to-Rank model *(in progress)*
+- [ ] Evaluation experiments *(planned)*
+
+---
+
+## Getting Started
+
+```bash
 git clone https://github.com/your-username/sourceup.git
 cd sourceup
-Run Backend
+pip install -r requirements.txt
 uvicorn main:app --reload
-Run Scraper
+```
+
+Run the Java scraper:
+
+```bash
 java -jar scraper.jar input.csv output.csv
-Project Structure
-sourceup/
-│
-├── data/                  # Scraped datasets
-├── scraper/               # Java scraping module
-├── backend/               # FastAPI services
-├── ranking/               # ML ranking models
-├── chatbot/               # SourceBot module
-├── experiments/           # Evaluation scripts
-└── notebooks/             # Research analysis
-Design Principles
-Clear separation between data, ranking, and interface
-Explainability over black-box decisions
-Constraint-aware modeling instead of filtering
-Modular and research-extensible architecture
-License
+```
 
-This project is intended for academic and research use.
-Licensing for commercial use can be defined in future versions.
+---
 
-Final Note
+## Roadmap
 
-SourceUp is not just a sourcing tool.
+- [ ] Learning-to-Rank with LambdaRank
+- [ ] Fairness-aware supplier recommendations
+- [ ] Reinforcement learning for dynamic scoring
+- [ ] Multilingual query support
+- [ ] Cloud deployment (Docker + Kubernetes)
 
-It is a step toward building explainable, constraint-aware AI systems for real-world decision-making.
+---
+
+## Skills Demonstrated
+
+- End-to-end ML system design
+- Semantic search with vector databases
+- Constraint-aware ranking formulation
+- Explainable AI for decision support systems
+- Data engineering: scraping  features  pipeline
+- API development + conversational AI integration
+
+---
+
+## About
+
+SourceUp is not just a recommender system. It is a step toward building **transparent, constraint-aware AI systems** for real-world procurement decisions  where trust and explainability matter as much as accuracy.
+
+---
+
+*Built for SMEs. Designed for clarity. Powered by constraint-aware AI.*
