@@ -1,0 +1,117 @@
+# =========================
+# Java / Maven
+# =========================
+target/
+*.class
+*.jar
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.python-version
+
+# =========================
+# Virtual Environments
+# =========================
+.env
+.env.*
+.venv/
+venv/
+env/
+conda-meta/
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+*.iml
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+.DS_Store?
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Data (Generated Artifacts)
+# =========================
+data/outputs/
+data/processed/
+data/embeddings/
+data/cache/
+data/clean/
+data/merged/
+data/training/
+*.xlsx
+*.csv
+*.html
+
+
+# Keep folder structure
+!data/**/.gitkeep
+
+
+
+# =========================
+# ML / Model Artifacts
+# =========================
+*.faiss
+*.index
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.onnx
+*.pkl
+
+# =========================
+# Cache
+# =========================
+.cache/
+torch_cache/
+huggingface/
+hf_cache/
+
+# =========================
+# Airflow
+# =========================
+airflow/logs/
+airflow/__pycache__/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Secrets (CRITICAL)
+# =========================
+*.env
+*.env.local
+*.key
+*.pem
+*.json
+
+# =========================
+# Temp / Backup
+# =========================
+*.tmp
+*.bak
+*.swp
+*.jar
