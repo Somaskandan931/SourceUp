@@ -40,18 +40,22 @@ if not LGBM_AVAILABLE and not XGB_AVAILABLE:
     print("❌ Neither LightGBM nor XGBoost is installed. Exiting.")
     exit(1)
 
-# Paths
-BASE_DIR = "C:/Users/somas/PycharmProjects/SourceUp"
-CLEAN_DATA = f"{BASE_DIR}/data/clean/suppliers_clean.csv"
-TRAINING_DATA = f"{BASE_DIR}/data/training/ranking_data.csv"
-MODELS_DIR = f"{BASE_DIR}/backend/app/models/embeddings"
-PLOTS_DIR = f"{BASE_DIR}/data/training/plots"
-LGBM_MODEL_PATH = f"{MODELS_DIR}/ranker_lightgbm.pkl"
-XGB_MODEL_PATH = f"{MODELS_DIR}/ranker_xgboost.pkl"
+# Paths — all resolved via config.cfg (no hardcoded paths)
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from config import cfg
+
+CLEAN_DATA      = str(cfg.CLEAN_DATA)
+TRAINING_DATA   = str(cfg.TRAINING_DATA)
+MODELS_DIR      = str(cfg.MODELS_DIR)
+PLOTS_DIR       = str(cfg.TRAINING_DIR / "plots")
+LGBM_MODEL_PATH = str(cfg.LGBM_MODEL)
+XGB_MODEL_PATH  = str(cfg.XGB_MODEL)
 
 # Create directories
+cfg.ensure_dirs()
 os.makedirs(PLOTS_DIR, exist_ok=True)
-os.makedirs(MODELS_DIR, exist_ok=True)
 
 
 # ============================================================================

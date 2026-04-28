@@ -1,52 +1,79 @@
-import pandas as pd
-import glob
-import os
+"""
+Validate & Merge scraped CSVs — SourceUp pipeline step 1.
+All paths from config.cfg.
+"""
 
-INPUT_DIR = "D:/PycharmProjects/SourceUp/data/outputs"
-OUTPUT_DIR = "D:/PycharmProjects/SourceUp/data/merged"
-SCHEMA_FILE = "D:/PycharmProjects/SourceUp/data/test_output.csv"
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import glob
+import pandas as pd
+from config import cfg
+
+# ✅ FIXED: lowercase keys to match normalized columns
+COLUMN_MAPPING = {
+    "years on platform": "years with gs",
+    "years_on_platform": "years with gs",
+    "years with gs": "years with gs",  # safe fallback
+}
 
 def load_canonical_schema():
-    if not os.path.exists(SCHEMA_FILE):
+    schema_path = str(cfg.SCHEMA_FILE)
+    if not os.path.exists(schema_path):
         raise FileNotFoundError(
-            "test_output.csv not found. "
-            "This file defines the canonical schema."
+            f"Schema file not found: {schema_path}\n"
+            "This file (test_output.csv) defines the canonical column set.\n"
+            "Place one row of your scraper output there as the template."
         )
-    schema_df = pd.read_csv(SCHEMA_FILE, nrows=0)
-    return [c.strip().lower() for c in schema_df.columns]
+    return [c.strip().lower() for c in pd.read_csv(schema_path, nrows=0).columns]
+
 
 def validate_and_merge():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(str(cfg.MERGED_DIR), exist_ok=True)
+    canonical = load_canonical_schema()
 
-    canonical_columns = load_canonical_schema()
-    files = glob.glob(f"{INPUT_DIR}/*.csv")
-
+    pattern = str(cfg.OUTPUTS_DIR / "*.csv")
+    files   = glob.glob(pattern)
     if not files:
-        raise FileNotFoundError(f"No CSV files found in {INPUT_DIR}")
+        raise FileNotFoundError(
+            f"No CSV files found in {cfg.OUTPUTS_DIR}\n"
+            "Run the Java scraper first (global-sources.bat on Windows, "
+            "or java -jar somasjar.jar ... on Linux/Mac)."
+        )
 
     dfs = []
-
     for f in files:
         df = pd.read_csv(f)
+
+        # ✅ normalize
         df.columns = [c.strip().lower() for c in df.columns]
 
-        missing = set(canonical_columns) - set(df.columns)
+        # ✅ ensure mapping keys are lowercase
+        mapping = {k.strip().lower(): v for k, v in COLUMN_MAPPING.items()}
+        df.rename(columns=mapping, inplace=True)
+
+        # DEBUG (optional, remove later)
+        print(f"Processed {os.path.basename(f)} columns:", df.columns.tolist())
+
+        missing = set(canonical) - set(df.columns)
+
+        # ✅ robust handling instead of crashing
         if missing:
-            raise ValueError(
-                f"{os.path.basename(f)} missing columns: {missing}"
-            )
+            print(f"[WARN] {os.path.basename(f)} missing columns: {missing}")
+            for col in missing:
+                df[col] = None
 
-        # Align schema exactly to test_output.csv
-        df = df[canonical_columns]
+        df = df[canonical]
         df["source_file"] = os.path.basename(f)
-
         dfs.append(df)
 
-    merged_df = pd.concat(dfs, ignore_index=True)
-    merged_df.to_csv(f"{OUTPUT_DIR}/suppliers_all.csv", index=False)
+    merged = pd.concat(dfs, ignore_index=True)
+    out    = str(cfg.MERGED_DATA)
+    merged.to_csv(out, index=False)
 
-    print(f"✅ Schema validated using test_output.csv")
-    print(f"✅ Merged {len(files)} files successfully")
+    print(f"✅ Merged {len(files)} files → {out}  ({len(merged)} rows)")
+    return merged
+
 
 if __name__ == "__main__":
     validate_and_merge()

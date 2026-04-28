@@ -193,7 +193,7 @@ def handle_what_if_query(sid: str, text: str, parsed_data: dict):
         scenario = "price_over_speed"
         scenario_name = "Price Focused"
     elif "speed" in text_lower or "fast" in text_lower:
-        scenario = "speed_over_speed"
+        scenario = "speed_over_price"
         scenario_name = "Speed Focused"
     elif "quality" in text_lower or "certification" in text_lower:
         scenario = "quality_over_cost"

@@ -39,17 +39,18 @@ from scipy.stats import kendalltau
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------------------------
-# Paths  — adjust BASE_DIR to match your machine
+# Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-BASE_DIR   = os.getenv("SOURCEUP_DIR", "C:/Users/somas/PycharmProjects/SourceUp")
-CLEAN_DATA = f"{BASE_DIR}/data/clean/suppliers_clean.csv"
-TRAIN_DATA = f"{BASE_DIR}/data/training/ranking_data.csv"
-LGBM_PATH  = f"{BASE_DIR}/backend/app/models/embeddings/ranker_lightgbm.pkl"
-OUT_DIR    = f"{BASE_DIR}/data/eval"
-PLOTS_DIR  = f"{OUT_DIR}/plots"
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+from config import cfg
 
-os.makedirs(OUT_DIR,   exist_ok=True)
-os.makedirs(PLOTS_DIR, exist_ok=True)
+CLEAN_DATA = str(cfg.CLEAN_DATA)
+TRAIN_DATA = str(cfg.TRAINING_DATA)
+LGBM_PATH  = str(cfg.LGBM_MODEL)
+OUT_DIR    = str(cfg.EVAL_DIR)
+PLOTS_DIR  = str(cfg.EVAL_PLOTS_DIR)
+
+cfg.ensure_dirs()
 
 # ---------------------------------------------------------------------------
 # Optional heavy imports (graceful degradation)

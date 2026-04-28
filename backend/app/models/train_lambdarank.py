@@ -56,18 +56,19 @@ except ImportError:
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-BASE_DIR   = os.getenv("SOURCEUP_DIR", "C:/Users/somas/PycharmProjects/SourceUp")
-TRAIN_DATA = f"{BASE_DIR}/data/training/ranking_data.csv"
-MODEL_DIR  = f"{BASE_DIR}/backend/app/models/embeddings"
-LGBM_PATH  = f"{MODEL_DIR}/ranker_lightgbm.pkl"
-XGBM_PATH  = f"{MODEL_DIR}/ranker_xgboost.pkl"   # backup copy
-OUT_DIR    = f"{BASE_DIR}/data/eval"
-PLOTS_DIR  = f"{OUT_DIR}/plots"
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from config import cfg
 
-os.makedirs(MODEL_DIR, exist_ok=True)
-os.makedirs(PLOTS_DIR, exist_ok=True)
+TRAIN_DATA = str(cfg.TRAINING_DATA)
+MODEL_DIR  = str(cfg.MODELS_DIR)
+LGBM_PATH  = str(cfg.LGBM_MODEL)
+XGBM_PATH  = str(cfg.XGB_MODEL)
+OUT_DIR    = str(cfg.EVAL_DIR)
+PLOTS_DIR  = str(cfg.EVAL_PLOTS_DIR)
+
+cfg.ensure_dirs()
 
 # ---------------------------------------------------------------------------
 # Feature columns (must match feature_builder.py output)
@@ -431,7 +432,7 @@ def main():
     print("=" * 65)
     print("🏗️  SourceUp — LambdaRank Training")
     print("=" * 65)
-    print(f"   BASE_DIR : {BASE_DIR}")
+    print(f"   ROOT     : {cfg.ROOT}")
     print(f"   DATA     : {TRAIN_DATA}")
     print(f"   γ        : {args.gamma}")
     print()

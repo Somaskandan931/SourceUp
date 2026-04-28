@@ -14,7 +14,7 @@ Output: data/training/ranking_data.csv
   Columns: query_id, query_text, [10 features], relevance, composite_score
 
 Run this ONCE before training:
-    python pipeline/feature_builder.py
+    python features/features/feature_builder.py
 
 IEEE justification for weak supervision:
     Labels are derived from the same scoring function used in production
@@ -33,17 +33,19 @@ from pathlib import Path
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths — all from config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-BASE_DIR     = os.getenv("SOURCEUP_DIR", "C:/Users/somas/PycharmProjects/SourceUp")
-CLEAN_DATA   = f"{BASE_DIR}/data/clean/suppliers_clean.csv"
-QUERY_FILE   = f"{BASE_DIR}/data/search_query.csv"
-INDEX_FILE   = f"{BASE_DIR}/data/embeddings/suppliers.faiss"
-META_FILE    = f"{BASE_DIR}/data/embeddings/suppliers_meta.csv"
-OUTPUT_FILE  = f"{BASE_DIR}/data/training/ranking_data.csv"
-SCHEMA_FILE  = f"{BASE_DIR}/data/test_output.csv"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from config import cfg
 
-os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)
+CLEAN_DATA  = str(cfg.CLEAN_DATA)
+QUERY_FILE  = str(cfg.QUERY_FILE)
+INDEX_FILE  = str(cfg.FAISS_INDEX)
+META_FILE   = str(cfg.FAISS_META)
+OUTPUT_FILE = str(cfg.TRAINING_DATA)
+SCHEMA_FILE = str(cfg.SCHEMA_FILE)
+
+cfg.ensure_dirs()
 
 # ---------------------------------------------------------------------------
 # FAISS / SBERT imports (optional — degrades gracefully)
@@ -75,7 +77,7 @@ COL_DELIVERY_DAYS  = "est delivery days"
 COL_DELIVERY_SCORE = "delivery score"
 COL_PRICE_SCORE    = "price score"
 
-# Metro cities for location scoring (matches App.java)
+# Metro cities for location scoring
 METRO_CITIES = {
     "mumbai": 0.95, "delhi": 0.92, "new delhi": 0.92, "chennai": 0.90,
     "bangalore": 0.88, "bengaluru": 0.88, "hyderabad": 0.87,
@@ -147,9 +149,8 @@ def load_faiss():
     if not os.path.exists(INDEX_FILE) or not os.path.exists(META_FILE):
         print(f"⚠️  FAISS index not found — run: python pipeline/run_all.py")
         return None, None
-    import faiss
-    index    = faiss.read_index(INDEX_FILE)
-    df_meta  = pd.read_csv(META_FILE)
+    index   = faiss.read_index(INDEX_FILE)
+    df_meta = pd.read_csv(META_FILE)
     df_meta.columns = [c.strip().lower() for c in df_meta.columns]
     print(f"✅ FAISS index loaded ({index.ntotal} vectors)")
     return index, df_meta
@@ -165,7 +166,6 @@ def safe_float(val, default: float = 0.0) -> float:
         return default
     try:
         s = str(val).strip()
-        # Handle price ranges like "0.28 - 0.31"
         if "-" in s and not s.startswith("-"):
             return float(s.split("-")[0].strip())
         return float(s.replace(",", ""))
@@ -174,7 +174,7 @@ def safe_float(val, default: float = 0.0) -> float:
 
 
 def parse_location_score(location: str) -> float:
-    """Delivery score from App.java city lookup."""
+    """Delivery score from city lookup."""
     if not isinstance(location, str):
         return 0.65
     loc_l = location.lower()
@@ -191,17 +191,13 @@ def has_certification(cert_string: str, required_cert: str) -> float:
             0.0 if cert is required but missing.
     """
     if not required_cert or str(required_cert).strip() == "":
-        return 0.5   # no filter active
+        return 0.5
     if not isinstance(cert_string, str):
         return 0.0
-    cert_l = cert_string.lower()
-    req_l  = required_cert.lower()
-    return 1.0 if req_l in cert_l else 0.0
+    return 1.0 if required_cert.lower() in cert_string.lower() else 0.0
 
 
-def compute_faiss_scores(query: str,
-                          index,
-                          df_meta: pd.DataFrame,
+def compute_faiss_scores(query: str, index, df_meta: pd.DataFrame,
                           top_k: int = 50) -> pd.DataFrame:
     """
     Retrieve top-k FAISS neighbours for a query.
@@ -210,10 +206,7 @@ def compute_faiss_scores(query: str,
     if index is None or df_meta is None:
         return pd.DataFrame(columns=["meta_idx", "faiss_score", "faiss_rank"])
 
-    import faiss
-    from sentence_transformers import SentenceTransformer
     model = SentenceTransformer("all-MiniLM-L6-v2")
-
     q_emb = model.encode([query], convert_to_numpy=True).astype(np.float32)
     distances, indices = index.search(q_emb, min(top_k, index.ntotal))
 
@@ -221,61 +214,53 @@ def compute_faiss_scores(query: str,
     for rank, (idx, dist) in enumerate(zip(indices[0], distances[0])):
         if idx < 0:
             continue
-        # Convert L2 distance to cosine-like similarity score ∈ [0, 1]
         score = 1.0 / (1.0 + dist)
         results.append({
-            "meta_idx":   idx,
+            "meta_idx":    idx,
             "faiss_score": score,
             "faiss_rank":  rank + 1,
         })
-
     return pd.DataFrame(results)
 
 
-def extract_features(supplier_row: pd.Series,
-                      query: str,
-                      max_price: float = None,
-                      target_location: str = None,
+def extract_features(supplier_row: pd.Series, query: str,
+                      max_price: float = None, target_location: str = None,
                       required_cert: str = None,
                       faiss_score: float = 0.5,
                       faiss_rank: int = 500) -> dict:
-    """
-    Compute the 10 feature vector for a (query, supplier) pair.
-    Default constraint values are neutral (0.5) = "no filter active".
-    """
-    # ── Price features ──────────────────────────────────────────────
+    """Compute the 10-feature vector for a (query, supplier) pair."""
+    # Price features
     price = safe_float(supplier_row.get(COL_PRICE, 0))
-
     if max_price and max_price > 0 and price > 0:
         price_match    = 1.0 if price <= max_price else 0.0
-        price_ratio    = min(price / max_price, 2.0)  # cap at 2x budget
+        price_ratio    = min(price / max_price, 2.0)
         price_distance = abs(price - max_price) / max_price
     else:
-        price_match    = 0.5   # no filter
+        price_match    = 0.5
         price_ratio    = 1.0
         price_distance = 0.0
 
-    # ── Location features ────────────────────────────────────────────
+    # Location features
     location = str(supplier_row.get(COL_LOCATION, "India"))
     if target_location and target_location.strip():
         location_match = (
             1.0 if target_location.lower() in location.lower()
-            else parse_location_score(location) * 0.5   # soft match
+            else parse_location_score(location) * 0.5
         )
     else:
-        location_match = 0.5   # no filter
+        location_match = 0.5
 
-    # ── Certification ────────────────────────────────────────────────
+    # Certification
     cert_string = str(supplier_row.get(COL_CERTIFICATIONS, ""))
     cert_match  = has_certification(cert_string, required_cert or "")
 
-    # ── Supplier quality ─────────────────────────────────────────────
+    # Supplier quality
     years_raw        = safe_float(supplier_row.get(COL_YEARS, 0))
     years_normalized = min(years_raw / 10.0, 1.0)
 
     biz_type = str(supplier_row.get(COL_BIZ_TYPE, "")).lower()
-    is_manufacturer     = 1.0 if "manufacturer" in biz_type else 0.0
-    is_trading_company  = 1.0 if "trading" in biz_type else 0.0
+    is_manufacturer    = 1.0 if "manufacturer" in biz_type else 0.0
+    is_trading_company = 1.0 if "trading" in biz_type else 0.0
 
     return {
         "price_match":        price_match,
@@ -291,49 +276,34 @@ def extract_features(supplier_row: pd.Series,
     }
 
 
-def compute_relevance_label(supplier_row: pd.Series,
-                              features: dict,
+def compute_relevance_label(supplier_row: pd.Series, features: dict,
                               gamma: float = 0.3) -> float:
     """
     Derive relevance label from composite_score in the data, or
     recompute it from raw features if the column is absent.
-
     Scale: 0–5 (integer labels for LambdaRank).
-    Applies constraint penalty before normalising.
-
-    composite_score formula (App.java):
-        score = 0.35 * price_score + 0.25 * delivery_score + 0.40 * reliability_score
-              - (price_ok ? 0 : 0.3) - (delivery_ok ? 0 : 0.2)
     """
-    # Try to use pre-computed composite score
     if COL_COMPOSITE in supplier_row.index:
         composite = safe_float(supplier_row[COL_COMPOSITE], -1)
         if composite >= 0:
-            # Scale to 0–5 and apply soft constraint penalty
             violation = (
                 (1.0 - features["price_match"])    * 0.5 +
                 (1.0 - features["location_match"]) * 0.3 +
                 (1.0 - features["cert_match"])     * 0.2
             )
-            # Neutral features (0.5) should not contribute to violation
-            violation = 0.0 if features["price_match"] == 0.5 else violation
-            penalised = composite - gamma * violation
+            violation  = 0.0 if features["price_match"] == 0.5 else violation
+            penalised  = composite - gamma * violation
             return max(0.0, min(5.0, penalised * 5.0))
 
-    # Recompute from feature columns
     price_s     = safe_float(supplier_row.get(COL_PRICE_SCORE, 0.5))
     delivery_s  = safe_float(supplier_row.get(COL_DELIVERY_SCORE, 0.65))
     reliability = safe_float(supplier_row.get(COL_RELIABILITY, 0.5))
-
-    score = 0.35 * price_s + 0.25 * delivery_s + 0.40 * reliability
-    score = max(0.0, min(1.0, score))
-    return score * 5.0
+    score       = 0.35 * price_s + 0.25 * delivery_s + 0.40 * reliability
+    return max(0.0, min(1.0, score)) * 5.0
 
 
 # ============================================================================
-# QUERY SAMPLING PARAMETERS
-# Defines synthetic constraint distributions for query expansion.
-# Reviewers expect diverse constraint combinations.
+# QUERY SAMPLING
 # ============================================================================
 
 CERT_OPTIONS     = ["ISO", "FDA", "CE", "RoHS", ""]
@@ -341,44 +311,24 @@ LOCATION_OPTIONS = ["India", "Mumbai", "Delhi", "Chennai", "Bengaluru", ""]
 
 
 def sample_constraints(query: str, seed: int = None) -> dict:
-    """
-    For each query, randomly sample constraint parameters to create
-    diverse (query, constraint) pairs. This prevents the training data
-    from being dominated by unconstrained queries.
-    """
+    """Randomly sample constraint parameters to create diverse training pairs."""
     rng = np.random.default_rng(seed)
-
-    # Budget: sample from realistic price ranges
     max_price = float(rng.choice([None, 0.5, 1.0, 2.0, 5.0, 10.0, 50.0, 100.0,
-                                    500.0, 1000.0]))
-    # Location: 40% of queries have a location preference
-    location = str(rng.choice(LOCATION_OPTIONS)) if rng.random() < 0.40 else ""
-    # Certification: 30% of queries require a cert
-    cert     = str(rng.choice(CERT_OPTIONS[:-1])) if rng.random() < 0.30 else ""
-
-    return {
-        "max_price":      max_price,
-        "target_location": location,
-        "required_cert":  cert,
-    }
+                                   500.0, 1000.0]))
+    location  = str(rng.choice(LOCATION_OPTIONS)) if rng.random() < 0.40 else ""
+    cert      = str(rng.choice(CERT_OPTIONS[:-1])) if rng.random() < 0.30 else ""
+    return {"max_price": max_price, "target_location": location, "required_cert": cert}
 
 
 # ============================================================================
 # MAIN BUILDER
 # ============================================================================
 
-def build_training_data(
-        top_k_faiss: int = 50,
-        queries_per_constraint: int = 3,
-        gamma: float = 0.3,
-) -> pd.DataFrame:
+def build_training_data(top_k_faiss: int = 50,
+                         queries_per_constraint: int = 3,
+                         gamma: float = 0.3) -> pd.DataFrame:
     """
     Build the full (query, supplier, features, label) training dataset.
-
-    Parameters:
-        top_k_faiss:             Number of FAISS neighbours per query
-        queries_per_constraint:  Constraint variations per base query
-        gamma:                   Label penalty weight for constraint violations
     """
     print("=" * 65)
     print("🏗️  SourceUp — Feature Builder")
@@ -393,11 +343,8 @@ def build_training_data(
 
     for base_query in queries:
         print(f"\n  Query: {base_query}")
-
-        # Get FAISS results once per base query
         df_faiss = compute_faiss_scores(base_query, faiss_index, df_meta, top_k_faiss)
 
-        # If FAISS not available, sample suppliers randomly
         if df_faiss.empty:
             sample_size = min(top_k_faiss, len(df_suppliers))
             candidate_indices = np.random.default_rng(hash(base_query) % 2**31).choice(
@@ -409,7 +356,6 @@ def build_training_data(
                 "faiss_rank":  np.arange(1, sample_size + 1),
             })
 
-        # Create multiple constraint variations per query
         for variation in range(queries_per_constraint):
             constraints = sample_constraints(
                 base_query,
@@ -418,11 +364,10 @@ def build_training_data(
             query_id += 1
 
             for _, faiss_row in df_faiss.iterrows():
-                idx      = int(faiss_row["meta_idx"])
-                f_score  = float(faiss_row["faiss_score"])
-                f_rank   = int(faiss_row["faiss_rank"])
+                idx     = int(faiss_row["meta_idx"])
+                f_score = float(faiss_row["faiss_score"])
+                f_rank  = int(faiss_row["faiss_rank"])
 
-                # Get supplier from appropriate source
                 if df_meta is not None and idx < len(df_meta):
                     supplier = df_meta.iloc[idx]
                 elif idx < len(df_suppliers):
@@ -431,18 +376,16 @@ def build_training_data(
                     continue
 
                 features  = extract_features(
-                    supplier,
-                    base_query,
-                    max_price      = constraints.get("max_price"),
-                    target_location= constraints.get("target_location", ""),
-                    required_cert  = constraints.get("required_cert", ""),
-                    faiss_score    = f_score,
-                    faiss_rank     = f_rank,
+                    supplier, base_query,
+                    max_price       = constraints.get("max_price"),
+                    target_location = constraints.get("target_location", ""),
+                    required_cert   = constraints.get("required_cert", ""),
+                    faiss_score     = f_score,
+                    faiss_rank      = f_rank,
                 )
-
                 relevance = compute_relevance_label(supplier, features, gamma)
 
-                row = {
+                all_rows.append({
                     "query_id":        query_id,
                     "query_text":      base_query,
                     "max_price":       constraints.get("max_price", ""),
@@ -451,11 +394,8 @@ def build_training_data(
                     "supplier_idx":    idx,
                     **features,
                     "relevance":       round(relevance, 4),
-                    "composite_score": safe_float(
-                        supplier.get(COL_COMPOSITE, 0), 0
-                    ),
-                }
-                all_rows.append(row)
+                    "composite_score": safe_float(supplier.get(COL_COMPOSITE, 0), 0),
+                })
 
         if len(all_rows) % 500 == 0 and all_rows:
             print(f"    {len(all_rows)} pairs generated so far...")
@@ -468,7 +408,7 @@ def build_training_data(
 
     df_out = pd.DataFrame(all_rows)
 
-    # Final validation
+    # Validate and clip
     feature_cols = [
         "price_match", "price_ratio", "price_distance",
         "location_match", "cert_match", "years_normalized",
@@ -479,7 +419,6 @@ def build_training_data(
         if col not in df_out.columns:
             raise ValueError(f"Missing column in output: {col}")
 
-    # Clip and normalise
     df_out["relevance"] = df_out["relevance"].clip(0, 5)
     for col in ["price_match", "location_match", "cert_match",
                 "faiss_score", "years_normalized"]:
@@ -488,7 +427,7 @@ def build_training_data(
     df_out.to_csv(OUTPUT_FILE, index=False)
 
     print(f"\n✅ Training dataset saved: {OUTPUT_FILE}")
-    print(f"   Total pairs:  {len(df_out)}")
+    print(f"   Total pairs:    {len(df_out)}")
     print(f"   Unique queries: {df_out['query_id'].nunique()}")
     print(f"   Relevance distribution:\n"
           f"{df_out['relevance'].round().astype(int).value_counts().sort_index()}")
@@ -504,15 +443,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Build SourceUp training features")
-    parser.add_argument("--top-k",     type=int,   default=50,
+    parser.add_argument("--top-k",      type=int,   default=50,
                         help="FAISS top-k per query (default: 50)")
-    parser.add_argument("--variations",type=int,   default=3,
+    parser.add_argument("--variations", type=int,   default=3,
                         help="Constraint variations per query (default: 3)")
-    parser.add_argument("--gamma",     type=float, default=0.3,
+    parser.add_argument("--gamma",      type=float, default=0.3,
                         help="Constraint penalty weight for labels (default: 0.3)")
     args = parser.parse_args()
 
-    df = build_training_data(
+    build_training_data(
         top_k_faiss=args.top_k,
         queries_per_constraint=args.variations,
         gamma=args.gamma,
