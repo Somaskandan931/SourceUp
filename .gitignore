@@ -1,0 +1,132 @@
+# =========================
+# Java / Maven
+# =========================
+target/
+*.class
+*.jar
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.python-version
+
+# =========================
+# Virtual Environments
+# =========================
+.env
+.env.*
+.venv/
+venv/
+env/
+conda-meta/
+
+# =========================
+# IDE / Editor
+# =========================
+.idea/
+.vscode/
+*.iml
+
+# =========================
+# OS Files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# Logs
+# =========================
+logs/
+*.log
+
+# =========================
+# Browser / Selenium Profiles
+# =========================
+data/user_data/
+data/tradeindia_profile/
+*.sqlite
+*.ldb
+CURRENT
+LOCK
+LOG
+LOG.old
+
+# =========================
+# Cache / Temporary Files
+# =========================
+.cache/
+torch_cache/
+huggingface/
+hf_cache/
+tmp/
+temp/
+
+# =========================
+# Data Artifacts
+# =========================
+data/outputs/
+data/processed/
+data/embeddings/
+data/cache/
+data/clean/
+data/merged/
+data/training/
+
+# Ignore generated datasets
+*.csv
+*.xlsx
+*.html
+
+# Keep folder structure
+!data/**/.gitkeep
+
+# =========================
+# ML / Model Artifacts
+# =========================
+*.faiss
+*.index
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.onnx
+*.pkl
+
+# =========================
+# Airflow
+# =========================
+airflow/logs/
+airflow/__pycache__/
+
+# =========================
+# Jupyter
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# Secrets
+# =========================
+*.env
+*.env.local
+*.key
+*.pem
+
+# IMPORTANT:
+# Don't blindly ignore all JSON files.
+# Many projects need config JSONs.
+# =========================
+
+# =========================
+# Temp / Backup
+# =========================
+*.tmp
+*.bak
+*.swp
