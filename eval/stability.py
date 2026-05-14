@@ -104,6 +104,8 @@ def load_test_data(test_frac: float = 0.2, seed: int = 42) -> pd.DataFrame:
     if not os.path.exists(TRAIN_DATA):
         raise FileNotFoundError(f"Training data not found: {TRAIN_DATA}")
     df      = pd.read_csv(TRAIN_DATA)
+    # FIX: Normalize column names so 'Product Name' → 'product_name', etc.
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     queries = df["query_id"].unique()
     rng     = np.random.default_rng(seed)
     rng.shuffle(queries)

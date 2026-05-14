@@ -242,18 +242,16 @@ class ConstraintEngine:
                     'reason': f"{years_val} years {'≥' if passes else '<'} {min_years} years required"
                 }
 
-        # Apply the final mask
-        filtered_df = df[mask]
-
-        # Update statistics
+        # Mark violations — do NOT filter suppliers out
         self.filters_applied = active_filters
-        self.filtered_count = original_len - len(filtered_df)
+        self.filtered_count = int((~mask).sum())
 
-        # Add constraint metadata back to suppliers
-        viable_suppliers = []
-        for idx, (_, row) in enumerate(filtered_df.iterrows()):
+        # Add constraint metadata back to all suppliers (including violators)
+        all_suppliers = []
+        for idx, (_, row) in enumerate(df.iterrows()):
             supplier = row.to_dict()
-            original_idx = row.get('_original_index', idx)
+            original_idx = idx
+            violated = not bool(mask.iloc[idx])
 
             if original_idx in constraint_results:
                 supplier['constraint_results'] = constraint_results[original_idx]
@@ -264,10 +262,11 @@ class ConstraintEngine:
                 supplier['constraint_results'] = {}
                 supplier['constraint_score'] = 1.0
 
-            supplier['passes_constraints'] = True
-            viable_suppliers.append(supplier)
+            supplier['constraint_violated'] = violated
+            supplier['passes_constraints'] = not violated
+            all_suppliers.append(supplier)
 
-        return viable_suppliers
+        return all_suppliers
 
     def _apply_constraints_iterative(
             self,
@@ -275,16 +274,17 @@ class ConstraintEngine:
             constraints: Dict
     ) -> List[Dict]:
         """
-        Original iterative filtering (used for small datasets).
-        Kept for backward compatibility.
+        Mark suppliers with constraint violations instead of removing them.
+        Suppliers stay in the list so the ranker can apply a penalty score,
+        keeping CVR meaningful (< 1.0) rather than always 1.0.
         """
         self.filters_applied = []
         self.filtered_count = 0
-        viable_suppliers = []
+        all_suppliers = []
 
         for supplier in suppliers:
             constraint_results = {}
-            passes_all = True
+            constraint_violated = False  # Track overall violation flag
 
             # CONSTRAINT 1: Budget Limit
             max_price = constraints.get("max_price")
@@ -299,8 +299,7 @@ class ConstraintEngine:
                         'reason': f"Price ${supplier_price:.2f} {'≤' if within_budget else '>'} ${max_price:.2f}"
                     }
                     if not within_budget:
-                        passes_all = False
-                        self.filtered_count += 1
+                        constraint_violated = True
                         if 'budget' not in self.filters_applied:
                             self.filters_applied.append('budget')
                 else:
@@ -327,8 +326,7 @@ class ConstraintEngine:
                             'reason': f"MOQ cost ${total_moq_cost:.2f} {'≤' if can_afford else '>'} ${moq_budget:.2f}"
                         }
                         if not can_afford:
-                            passes_all = False
-                            self.filtered_count += 1
+                            constraint_violated = True
                             if 'moq_affordability' not in self.filters_applied:
                                 self.filters_applied.append('moq_affordability')
                     except (ValueError, TypeError):
@@ -349,8 +347,7 @@ class ConstraintEngine:
                             'reason': f"{lead_time_days} days {'≤' if meets_deadline else '>'} {max_lead_time} days required"
                         }
                         if not meets_deadline:
-                            passes_all = False
-                            self.filtered_count += 1
+                            constraint_violated = True
                             if 'delivery_urgency' not in self.filters_applied:
                                 self.filters_applied.append('delivery_urgency')
                     except (ValueError, TypeError):
@@ -368,8 +365,7 @@ class ConstraintEngine:
                     'reason': f"{'Has' if has_required else 'Missing'} required certifications"
                 }
                 if not has_required:
-                    passes_all = False
-                    self.filtered_count += 1
+                    constraint_violated = True
                     if 'certifications' not in self.filters_applied:
                         self.filters_applied.append('certifications')
 
@@ -390,8 +386,7 @@ class ConstraintEngine:
                     'reason': f"Location {'matches' if is_preferred else 'differs from'} preference"
                 }
                 if location_mandatory and not is_preferred:
-                    passes_all = False
-                    self.filtered_count += 1
+                    constraint_violated = True
                     if 'location' not in self.filters_applied:
                         self.filters_applied.append('location')
 
@@ -409,24 +404,36 @@ class ConstraintEngine:
                         'reason': f"{years_value} years {'≥' if meets_experience else '<'} {min_years} years required"
                     }
                     if not meets_experience:
-                        passes_all = False
-                        self.filtered_count += 1
+                        constraint_violated = True
                         if 'experience' not in self.filters_applied:
                             self.filters_applied.append('experience')
                 except (ValueError, TypeError):
                     pass
 
-            # Add constraint metadata
-            if passes_all:
-                supplier['constraint_results'] = constraint_results
-                supplier['passes_constraints'] = True
-                supplier['constraint_score'] = self._calculate_constraint_score(constraint_results)
-                viable_suppliers.append(supplier)
-            else:
-                supplier['constraint_results'] = constraint_results
-                supplier['passes_constraints'] = False
+            # MARK violation — do NOT remove the supplier
+            supplier['constraint_results'] = constraint_results
+            supplier['constraint_violated'] = constraint_violated
+            supplier['passes_constraints'] = not constraint_violated
+            supplier['constraint_score'] = self._calculate_constraint_score(constraint_results)
 
-        return viable_suppliers
+            if constraint_violated:
+                self.filtered_count += 1
+
+            all_suppliers.append(supplier)
+
+        return all_suppliers
+
+    @staticmethod
+    def compute_cvr(suppliers: List[Dict]) -> float:
+        """
+        Constraint Violation Rate: fraction of suppliers that violate at least
+        one constraint.  Returns a value in [0, 1] — lower is worse.
+        CVR = 1 - (violations / total)
+        """
+        if not suppliers:
+            return 1.0
+        violations = sum(1 for s in suppliers if s.get("constraint_violated", False))
+        return 1.0 - (violations / len(suppliers))
 
     def _extract_price(self, supplier: Dict) -> float:
         """Extract numeric price from supplier data."""

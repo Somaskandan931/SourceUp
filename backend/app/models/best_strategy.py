@@ -36,6 +36,12 @@ def train_best_strategy () :
     df.columns = [c.strip().lower().replace( ' ', '_' ) for c in df.columns]
     df['relevance'] = df['relevance'].round().clip( 0, 5 ).astype( int )
 
+    # ── Drop raw location / tier columns — must never reach the model ───────
+    cols_to_drop = [c for c in ["location", "tier", "supplier_name", "query_text"] if c in df.columns]
+    if cols_to_drop:
+        df = df.drop( columns=cols_to_drop )
+        print( f"   ⚠️  Dropped non-feature columns: {cols_to_drop}" )
+
     print( f"\n📊 Loaded {len( df ):,} rows, {df['query_id'].nunique()} queries" )
 
     # Split

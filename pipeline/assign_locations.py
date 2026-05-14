@@ -205,14 +205,14 @@ def add_fairness_weights_to_training () :
     clean_df = pd.read_csv( str( cfg.CLEAN_DATA ) )
     clean_df.columns = [c.strip().lower().replace( ' ', '_' ) for c in clean_df.columns]
 
-    if 'supplier_idx' in df.columns and 'location' in clean_df.columns :
-        # Create location mapping
-        clean_df['supplier_idx'] = clean_df.index
-        location_map = clean_df[['supplier_idx', 'location']].drop_duplicates()
+    # FIX: feature_builder.py now writes 'location' directly into the training CSV.
+    # The old merge on supplier_idx was broken (rank 0-49 vs clean_df index 0-1.2M).
+    # Just use the location column that is already in the training data.
+    if 'location' not in df.columns:
+        print( "⚠️  No 'location' column in training data — re-run feature_builder.py first" )
+        return
 
-        # Merge
-        df = df.merge( location_map, on='supplier_idx', how='left' )
-
+    if True:
         # Calculate city tier
         def get_tier ( loc ) :
             if pd.isna( loc ) :
@@ -226,21 +226,24 @@ def add_fairness_weights_to_training () :
 
         df['city_tier'] = df['location'].apply( get_tier )
 
-        # Calculate fairness weights (upweight Tier-2 and Tier-3)
+        # ====================================================================
+        # REPLACED fairness weight logic (correct direction)
+        # ====================================================================
         tier_counts = df['city_tier'].value_counts()
         print( f"\n📊 Training city tier distribution:" )
         print( tier_counts )
 
-        df['fairness_weight'] = 1.0
-        if 'Tier-2' in tier_counts and tier_counts['Tier-2'] > 0 :
-            weight_metro_to_tier2 = tier_counts.get( 'Metro', 1 ) / tier_counts['Tier-2']
-            df.loc[df['city_tier'] == 'Tier-2', 'fairness_weight'] = min( weight_metro_to_tier2, 5.0 )
-            print( f"   Tier-2 weight: {min( weight_metro_to_tier2, 5.0 ):.2f}" )
+        max_count = tier_counts.max()
 
-        if 'Tier-3' in tier_counts and tier_counts['Tier-3'] > 0 :
-            weight_metro_to_tier3 = tier_counts.get( 'Metro', 1 ) / tier_counts['Tier-3']
-            df.loc[df['city_tier'] == 'Tier-3', 'fairness_weight'] = min( weight_metro_to_tier3, 5.0 )
-            print( f"   Tier-3 weight: {min( weight_metro_to_tier3, 5.0 ):.2f}" )
+        def get_weight(tier):
+            return max_count / tier_counts[tier]
+
+        df['fairness_weight'] = df['city_tier'].apply(get_weight)
+
+        print(f"\n   Fairness weights applied:")
+        for tier in df['city_tier'].unique():
+            if tier in tier_counts:
+                print(f"      {tier}: {get_weight(tier):.2f}")
 
         # Save with weights
         output_path = str( cfg.TRAINING_DATA ).replace( '.csv', '_weighted.csv' )

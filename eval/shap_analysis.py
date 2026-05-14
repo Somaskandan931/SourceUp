@@ -2,7 +2,7 @@
 SHAP Feature Attribution Analysis — SourceUp Supplier Ranking
 --------------------------------------------------------------
 Uses the SHAP library to generate scientifically validated feature
-attributions from the trained LightGBM LambdaRank model.
+attributions from the trained XGBoost XGBRanker model.
 
 This converts decision traces from "heuristic reasons" into
 model-grounded explanations suitable for IEEE publication.
@@ -35,6 +35,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -45,14 +46,13 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-# FIXED: Changed from parents[2] to parents[1] to correctly find config.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from config import cfg
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
-LGBM_PATH  = str(cfg.LGBM_MODEL)
-OUT_DIR    = str(cfg.EVAL_DIR)
-PLOTS_DIR  = str(cfg.EVAL_PLOTS_DIR)
+XGB_PATH = str(cfg.LGBM_MODEL)  # NOTE: cfg key name unchanged but holds XGBoost model
+OUT_DIR = str(cfg.EVAL_DIR)
+PLOTS_DIR = str(cfg.EVAL_PLOTS_DIR)
 
 cfg.ensure_dirs()
 
@@ -61,6 +61,7 @@ cfg.ensure_dirs()
 # ---------------------------------------------------------------------------
 try:
     import shap
+
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
@@ -84,16 +85,16 @@ FEATURE_COLS = [
 ]
 
 FEATURE_LABELS = {
-    "price_match":        "Price Within Budget",
-    "price_ratio":        "Price / Budget Ratio",
-    "price_distance":     "Price Distance",
-    "location_match":     "Location Match",
-    "cert_match":         "Certification Match",
-    "years_normalized":   "Years on Platform",
-    "is_manufacturer":    "Is Manufacturer",
+    "price_match": "Price Within Budget",
+    "price_ratio": "Price / Budget Ratio",
+    "price_distance": "Price Distance",
+    "location_match": "Location Match",
+    "cert_match": "Certification Match",
+    "years_normalized": "Years on Platform",
+    "is_manufacturer": "Is Manufacturer",
     "is_trading_company": "Is Trading Company",
-    "faiss_score":        "Semantic Similarity (SBERT)",
-    "faiss_rank":         "FAISS Retrieval Rank",
+    "faiss_score": "Semantic Similarity (SBERT)",
+    "faiss_rank": "FAISS Retrieval Rank",
 }
 
 sns.set_style("whitegrid")
@@ -105,16 +106,18 @@ plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
 # ============================================================================
 
 def load_model():
-    if not os.path.exists(LGBM_PATH):
+    """Load XGBoost XGBRanker model"""
+    if not os.path.exists(XGB_PATH):
         raise FileNotFoundError(
-            f"LightGBM model not found: {LGBM_PATH}\n"
+            f"XGBoost model not found: {XGB_PATH}\n"
             "Run: python backend/app/models/train_ranker.py"
         )
-    with open(LGBM_PATH, "rb") as f:
+    with open(XGB_PATH, "rb") as f:
         return pickle.load(f)
 
 
 def load_test_data(test_frac: float = 0.2, seed: int = 42) -> pd.DataFrame:
+    """Load test data for SHAP analysis"""
     if not os.path.exists(TRAIN_DATA):
         raise FileNotFoundError(
             f"Training data not found: {TRAIN_DATA}\n"
@@ -135,26 +138,68 @@ def load_test_data(test_frac: float = 0.2, seed: int = 42) -> pd.DataFrame:
 
 
 # ============================================================================
-# SHAP COMPUTATION
+# SHAP COMPUTATION — XGBoost Ranker Compatibility Fix
 # ============================================================================
 
 def compute_shap_values(model, df_test: pd.DataFrame):
     """
-    Compute SHAP values using TreeExplainer (exact, fast for tree models).
-    Returns shap_values array of shape (n_samples, n_features).
+    Compute SHAP values for XGBoost Ranker using native XGBoost API.
+
+    FIX:
+    Avoids SHAP TreeExplainer parser bug entirely by using
+    XGBoost's built-in pred_contribs=True.
+
+    This is mathematically equivalent to TreeSHAP.
     """
-    print("\n🔬 Computing SHAP values (TreeExplainer)...")
-    X = df_test[FEATURE_COLS].values.astype(np.float32)
 
-    explainer = shap.TreeExplainer(model)
-    shap_values = explainer.shap_values(X)
+    print("\n🔬 Computing SHAP values using XGBoost native TreeSHAP...")
 
-    # LightGBM ranking models return a list for some versions
-    if isinstance(shap_values, list):
-        shap_values = shap_values[0]
+    import xgboost as xgb
 
-    print(f"   SHAP values shape: {shap_values.shape}")
-    return shap_values, explainer, X
+    # Keep dataframe
+    X = df_test[FEATURE_COLS].astype(np.float32)
+
+    try:
+        # ---------------------------------------------------------
+        # GET RAW BOOSTER
+        # ---------------------------------------------------------
+        booster = model.get_booster()
+
+        print("   Creating DMatrix...")
+
+        dmatrix = xgb.DMatrix(X)
+
+        print("   Computing SHAP contributions via pred_contribs=True...")
+
+        # Native TreeSHAP from XGBoost
+        shap_contribs = booster.predict(
+            dmatrix,
+            pred_contribs=True
+        )
+
+        # Last column = bias term
+        shap_values_array = shap_contribs[:, :-1]
+
+        # Expected value (base score)
+        expected_value = shap_contribs[0, -1]
+
+        # ---------------------------------------------------------
+        # Lightweight explainer mock
+        # ---------------------------------------------------------
+        class DummyExplainer:
+            pass
+
+        explainer = DummyExplainer()
+        explainer.expected_value = expected_value
+
+        print(f"   SHAP values shape: {shap_values_array.shape}")
+        print(f"   Expected value: {expected_value:.6f}")
+
+    except Exception as e:
+        print(f"❌ Native TreeSHAP failed: {e}")
+        raise
+
+    return shap_values_array, explainer, X
 
 
 def save_shap_csv(shap_values: np.ndarray, df_test: pd.DataFrame):
@@ -176,7 +221,7 @@ def save_shap_csv(shap_values: np.ndarray, df_test: pd.DataFrame):
 # PLOTS
 # ============================================================================
 
-def plot_shap_summary_beeswarm(shap_values: np.ndarray, X: np.ndarray):
+def plot_shap_summary_beeswarm(shap_values: np.ndarray, X: pd.DataFrame):
     """
     Fig. 3a: Beeswarm summary plot.
     Shows the distribution of SHAP values for each feature,
@@ -185,8 +230,11 @@ def plot_shap_summary_beeswarm(shap_values: np.ndarray, X: np.ndarray):
     print("  Plotting: SHAP beeswarm summary...")
     plt.figure(figsize=(11, 7))
 
+    # Convert to numpy if X is DataFrame for compatibility
+    X_np = X.values if hasattr(X, 'values') else X
+
     shap.summary_plot(
-        shap_values, X,
+        shap_values, X_np,
         feature_names=[FEATURE_LABELS.get(c, c) for c in FEATURE_COLS],
         show=False,
         max_display=10,
@@ -206,7 +254,7 @@ def plot_shap_summary_beeswarm(shap_values: np.ndarray, X: np.ndarray):
     print(f"  ✅ Saved: {path}")
 
 
-def plot_shap_summary_bar(shap_values: np.ndarray, X: np.ndarray):
+def plot_shap_summary_bar(shap_values: np.ndarray, X: pd.DataFrame):
     """
     Fig. 3b: Mean absolute SHAP bar chart.
     This is the publishable global feature importance figure.
@@ -244,7 +292,7 @@ def plot_shap_summary_bar(shap_values: np.ndarray, X: np.ndarray):
     print(f"  ✅ Saved: {path}")
 
 
-def plot_shap_dependence(shap_values: np.ndarray, X: np.ndarray, top_n: int = 3):
+def plot_shap_dependence(shap_values: np.ndarray, X: pd.DataFrame, top_n: int = 3):
     """
     Dependence plots for the top-N most important features.
     Shows how SHAP value changes with feature value,
@@ -254,26 +302,32 @@ def plot_shap_dependence(shap_values: np.ndarray, X: np.ndarray, top_n: int = 3)
     mean_abs = np.abs(shap_values).mean(axis=0)
     top_indices = np.argsort(mean_abs)[::-1][:top_n]
 
+    # Convert to numpy if DataFrame
+    X_np = X.values if hasattr(X, 'values') else X
+
     for rank, feat_idx in enumerate(top_indices):
         feat_name = FEATURE_COLS[feat_idx]
         feat_label = FEATURE_LABELS.get(feat_name, feat_name)
 
         # Find most correlated interaction feature
-        correlations = [abs(np.corrcoef(shap_values[:, feat_idx], X[:, j])[0, 1])
-                        for j in range(X.shape[1]) if j != feat_idx]
+        correlations = []
+        for j in range(X_np.shape[1]):
+            if j != feat_idx:
+                corr = abs(np.corrcoef(shap_values[:, feat_idx], X_np[:, j])[0, 1])
+                correlations.append((corr, j))
+
         if correlations:
-            interact_idx = int(np.argmax(correlations))
-            if interact_idx >= feat_idx:
-                interact_idx += 1  # skip self
+            interact_idx = max(correlations, key=lambda x: x[0])[1]
             interact_label = FEATURE_LABELS.get(FEATURE_COLS[interact_idx], FEATURE_COLS[interact_idx])
         else:
             interact_label = "other features"
+            interact_idx = 0
 
         fig, ax = plt.subplots(figsize=(9, 5))
         sc = ax.scatter(
-            X[:, feat_idx],
+            X_np[:, feat_idx],
             shap_values[:, feat_idx],
-            c=X[:, interact_idx] if interact_idx < X.shape[1] else np.zeros(X.shape[0]),
+            c=X_np[:, interact_idx] if interact_idx < X_np.shape[1] else np.zeros(X_np.shape[0]),
             cmap="RdBu",
             alpha=0.6, s=20, edgecolors="none"
         )
@@ -289,7 +343,7 @@ def plot_shap_dependence(shap_values: np.ndarray, X: np.ndarray, top_n: int = 3)
         )
         ax.grid(alpha=0.25)
         plt.tight_layout()
-        safe_name = feat_name.replace("/", "_")
+        safe_name = feat_name.replace("/", "_").replace(" ", "_")
         path = f"{PLOTS_DIR}/shap_dependence_{safe_name}.png"
         plt.savefig(path, dpi=150, bbox_inches="tight")
         plt.close()
@@ -342,7 +396,7 @@ def plot_shap_heatmap(shap_values: np.ndarray, df_test: pd.DataFrame,
 
 
 def plot_shap_waterfall(shap_values: np.ndarray, explainer,
-                        X: np.ndarray, df_test: pd.DataFrame):
+                        X: pd.DataFrame, df_test: pd.DataFrame):
     """
     Waterfall plot for a single prediction.
     Shows how the base value is increased/decreased by each feature.
@@ -351,11 +405,11 @@ def plot_shap_waterfall(shap_values: np.ndarray, explainer,
 
     # Pick a random supplier from test set
     idx = np.random.randint(0, len(shap_values))
-    expected_value = explainer.expected_value
+
+    # Safe extraction of expected value
+    expected_value = getattr(explainer, "expected_value", 0.0)
     if isinstance(expected_value, (list, np.ndarray)):
         expected_value = float(expected_value[0]) if len(expected_value) > 0 else 0.0
-
-    fig, ax = plt.subplots(figsize=(10, 6))
 
     # Get feature contributions for this supplier
     contributions = []
@@ -370,6 +424,7 @@ def plot_shap_waterfall(shap_values: np.ndarray, explainer,
     feat_names = [c[0] for c in contributions]
     feat_values = [c[1] for c in contributions]
 
+    fig, ax = plt.subplots(figsize=(10, 6))
     y_pos = np.arange(len(feat_names))
     colors = ['#2166ac' if v > 0 else '#d73027' for v in feat_values]
 
@@ -379,10 +434,12 @@ def plot_shap_waterfall(shap_values: np.ndarray, explainer,
                label=f'Base Value: {expected_value:.3f}')
 
     for bar, val in zip(bars, feat_values):
-        ax.text(bar.get_width() + (0.002 if val > 0 else -0.002),
+        offset = 0.002 if val > 0 else -0.002
+        ha = 'left' if val > 0 else 'right'
+        ax.text(bar.get_width() + offset,
                 bar.get_y() + bar.get_height() / 2,
                 f'{val:+.3f}', va='center',
-                ha='left' if val > 0 else 'right', fontsize=9)
+                ha=ha, fontsize=9)
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(feat_names)
@@ -404,7 +461,7 @@ def plot_shap_waterfall(shap_values: np.ndarray, explainer,
 
 def plot_shap_force_example(shap_values: np.ndarray,
                             explainer,
-                            X: np.ndarray,
+                            X: pd.DataFrame,
                             df_test: pd.DataFrame):
     """
     Force plot for the top-ranked supplier in a sample query.
@@ -435,9 +492,11 @@ def plot_shap_force_example(shap_values: np.ndarray,
     feat_labels = [FEATURE_LABELS.get(c, c) for c in FEATURE_COLS]
 
     sv = shap_values[best_rel_idx]
-    base = explainer.expected_value
+
+    # Safe extraction of expected value
+    base = getattr(explainer, "expected_value", 0.0)
     if isinstance(base, (list, np.ndarray)):
-        base = float(base[0])
+        base = float(base[0]) if len(base) > 0 else 0.0
 
     pos_feats = [(fl, v) for fl, v in zip(feat_labels, sv) if v > 0]
     neg_feats = [(fl, v) for fl, v in zip(feat_labels, sv) if v < 0]
@@ -454,13 +513,12 @@ def plot_shap_force_example(shap_values: np.ndarray,
                    edgecolor="black", linewidth=0.5, alpha=0.85)
 
     for bar, val in zip(bars, values):
-        ax.text(
-            bar.get_width() + (0.002 if val > 0 else -0.002),
-            bar.get_y() + bar.get_height() / 2,
-            f"{val:+.4f}", va="center",
-            ha="left" if val > 0 else "right",
-            fontsize=8.5
-        )
+        offset = 0.002 if val > 0 else -0.002
+        ha = 'left' if val > 0 else 'right'
+        ax.text(bar.get_width() + offset,
+                bar.get_y() + bar.get_height() / 2,
+                f"{val:+.4f}", va="center",
+                ha=ha, fontsize=8.5)
 
     ax.axvline(0, color="black", linewidth=1)
     ax.set_xlabel("SHAP Value (contribution to ranking score)", fontsize=11)
@@ -495,10 +553,10 @@ def print_shap_summary(shap_values: np.ndarray):
         "Rank (Impact)": len(FEATURE_COLS) - np.argsort(np.argsort(mean_abs)),
     }).sort_values("Rank (Impact)")
 
-    print("\n" + "=" * 65)
+    print("\n" + "=" * 70)
     print("SHAP GLOBAL FEATURE ATTRIBUTION SUMMARY")
     print("(suitable for Table III in the paper)")
-    print("=" * 65)
+    print("=" * 70)
     print(df_sum.to_string(index=False))
 
     path = f"{OUT_DIR}/shap_summary_statistics.csv"
@@ -512,12 +570,15 @@ def print_shap_summary(shap_values: np.ndarray):
 # ============================================================================
 
 def run_shap_analysis():
-    print("=" * 65)
+    print("=" * 70)
     print("🔍 SourceUp — SHAP Feature Attribution Analysis")
-    print("=" * 65)
+    print("   (XGBoost XGBRanker with compatibility fix)")
+    print("=" * 70)
 
     # Load
     model = load_model()
+    print(f"✅ Model loaded: {type(model).__name__}")
+
     df_test = load_test_data(test_frac=0.2)
 
     # Compute SHAP values
@@ -539,6 +600,7 @@ def run_shap_analysis():
     print_shap_summary(shap_values)
 
     print(f"\n✅ All SHAP outputs saved in: {OUT_DIR}")
+    print(f"   Plots directory: {PLOTS_DIR}")
     return shap_values, df_test
 
 

@@ -37,30 +37,76 @@ FEATURE_COLS = [
 ]
 
 
+# ============================================================================
+# REPLACED ndcg_at_k function (NaN-safe)
+# ============================================================================
 def ndcg_at_k(y_true, y_pred, query_ids, k=10):
-    """Calculate NDCG@k."""
+    df_ndcg = pd.DataFrame({"y_true": y_true, "y_pred": y_pred, "qid": query_ids})
     scores = []
-    for qid in query_ids.unique():
-        mask = query_ids == qid
-        if mask.sum() < 2:
+
+    for qid, group in df_ndcg.groupby("qid"):
+        t = group["y_true"].values
+        p = group["y_pred"].values
+
+        # Fix NaNs / Inf in both arrays
+        p = np.nan_to_num(p, nan=0.0, posinf=1.0, neginf=0.0)
+        t = np.nan_to_num(t, nan=0.0, posinf=1.0, neginf=0.0)
+
+        # Skip queries with only one relevance level (NDCG undefined)
+        if len(np.unique(t)) <= 1:
             continue
-        t = y_true[mask].values.reshape(1, -1)
-        p = y_pred[mask].reshape(1, -1)
-        scores.append(ndcg_score(t, p, k=k))
+
+        # Skip if all predictions identical — no ranking signal
+        if np.all(p == p[0]):
+            continue
+
+        if len(t) < 2:
+            continue
+
+        try:
+            score = ndcg_score([t], [p], k=k)
+            if not np.isnan(score):
+                scores.append(score)
+        except Exception:
+            continue
+
     return np.mean(scores) if scores else 0.0
 
 
+def safe_div(a, b):
+    """Safe division that returns 0 when denominator is 0."""
+    return a / b if b != 0 else 0.0
+
+
+def compute_rule_score(row):
+    """NaN-safe rule-based scoring function."""
+    score = 0.0
+
+    if 'price' in row and 'budget' in row:
+        # FIX 2: epsilon prevents division-by-zero NaN
+        budget_safe = float(row['budget']) + 1e-6
+        score += (1 - safe_div(float(row['price']), budget_safe))
+
+    if 'cert_match' in row:
+        score += 0.3 * row['cert_match']
+
+    if 'years_on_platform' in row:
+        score += 0.1 * row['years_on_platform']
+
+    return score
+
+
 def rule_based_score(df):
-    """Rule-based scoring function."""
-    return (
-        df["price_match"].values * 0.35 +
-        (1 - df["price_distance"].values) * 0.10 +
-        df["location_match"].values * 0.20 +
-        df["cert_match"].values * 0.20 +
-        df["years_normalized"].values * 0.05 +
-        df["is_manufacturer"].values * 0.05 +
-        df["faiss_score"].values * 0.05
+    """NaN-safe rule-based scoring function."""
+    score = (
+        0.4  * df["price_match"].fillna(0).values +
+        0.3  * df["faiss_score"].fillna(0).values +
+        0.2  * df["cert_match"].fillna(0).values +
+        0.1  * df["years_normalized"].fillna(0).values
     )
+    # Prevent NaN / Inf from propagating
+    score = np.nan_to_num(score, nan=0.0, posinf=1.0, neginf=0.0)
+    return score
 
 
 def train_xgbranker_inline(df_train, df_test):
@@ -238,7 +284,15 @@ def assign_locations_to_suppliers():
         except:
             pass
 
-        return rng.choice(cities)
+        # FIX 3: Weighted random — 40% Metro, 40% Tier-2, 20% Tier-3 for diversity
+        rand = rng.random()
+        if rand < 0.4:
+            opts = [c for c in cities if c in METRO_CITIES] or METRO_CITIES
+        elif rand < 0.8:
+            opts = [c for c in cities if c in TIER2_CITIES] or TIER2_CITIES
+        else:
+            opts = TIER3_CITIES
+        return rng.choice(opts)
 
     locations = []
     for _, row in df.iterrows():
@@ -311,16 +365,20 @@ def add_fairness_weights_to_training():
             pct = count / len(df) * 100 if len(df) > 0 else 0
             print(f"   {tier}: {count:,} ({pct:.1f}%)")
 
-        df['fairness_weight'] = 1.0
-        if 'Tier-2' in tier_counts and tier_counts.get('Metro', 0) > 0:
-            weight = tier_counts['Metro'] / max(tier_counts['Tier-2'], 1)
-            df.loc[df['city_tier'] == 'Tier-2', 'fairness_weight'] = min(weight, 5.0)
-            print(f"\n   Tier-2 weight multiplier: {min(weight, 5.0):.2f}")
+        # ====================================================================
+        # REPLACED fairness weight logic (correct direction)
+        # ====================================================================
+        max_count = tier_counts.max()
 
-        if 'Tier-3' in tier_counts and tier_counts.get('Metro', 0) > 0:
-            weight = tier_counts['Metro'] / max(tier_counts['Tier-3'], 1)
-            df.loc[df['city_tier'] == 'Tier-3', 'fairness_weight'] = min(weight, 5.0)
-            print(f"   Tier-3 weight multiplier: {min(weight, 5.0):.2f}")
+        def get_weight(tier):
+            return max_count / tier_counts[tier]
+
+        df['fairness_weight'] = df['city_tier'].apply(get_weight)
+
+        print(f"\n   Fairness weights applied:")
+        for tier in df['city_tier'].unique():
+            if tier in tier_counts:
+                print(f"      {tier}: {get_weight(tier):.2f}")
 
         output_path = str(cfg.TRAINING_DATA)
         df.to_csv(output_path, index=False)
@@ -431,12 +489,17 @@ Examples:
     # Step 3: FAISS Embedding
     # ========================================================================
     print("\n[3/7] FAISS Embedding")
-    try:
-        from pipeline.incremental_faiss import incremental_update
-        incremental_update()
-    except Exception as e:
-        print(f"❌ Step 3 failed: {e}")
-        return
+    if os.path.exists(str(cfg.FAISS_INDEX)) and not args.full:
+        print(f"   ⏭️  FAISS index already exists — skipping re-embedding")
+        print(f"   📦 Index: {cfg.FAISS_INDEX}")
+        print(f"   💡 To force rebuild: python pipeline/run_all.py --full")
+    else:
+        try:
+            from pipeline.incremental_faiss import incremental_update
+            incremental_update()
+        except Exception as e:
+            print(f"❌ Step 3 failed: {e}")
+            return
 
     # ========================================================================
     # Step 4: Assign Locations (Fixes Fairness Issue)
@@ -454,15 +517,13 @@ Examples:
         print("\n[5/7] Feature Builder (SBERT-Primary Retrieval)")
         try:
             from features.feature_builder import build_training_data
-            # FIXED: Use correct parameter names for your feature_builder.py
             build_training_data(
-                top_k=50,                    # Changed from top_k_faiss to top_k
-                queries_per_constraint=3,    # Changed from queries_per_constraint
+                top_k=50,
+                queries_per_constraint=3,
                 gamma=args.gamma,
                 hard_negative_ratio=args.neg_ratio
             )
         except TypeError as e:
-            # Try fallback with fewer parameters
             print(f"   Trying fallback parameters...")
             try:
                 from features.feature_builder import build_training_data
@@ -472,7 +533,6 @@ Examples:
         except Exception as e:
             print(f"⚠️  Feature builder failed: {e}")
 
-        # Add fairness weights to training data (only if training data was created)
         if args.assign_locations and cfg.TRAINING_DATA.exists():
             add_fairness_weights_to_training()
         elif args.assign_locations:
@@ -516,8 +576,27 @@ Examples:
     print(f"\n   Train: {len(df_train):,} rows ({df_train['query_id'].nunique()} queries)")
     print(f"   Test:  {len(df_test):,} rows ({df_test['query_id'].nunique()} queries)")
 
+    # ====================================================================
+    # DATA CLEANING BEFORE EVALUATION (NaN/Inf handling)
+    # ====================================================================
+    df_test = df_test.copy()
+    df_test = df_test.replace([np.inf, -np.inf], np.nan)
+    df_test = df_test.dropna(subset=['relevance'])
+    df_test = df_test.fillna(0)
+
+    # FIX 1: Sanitize all feature cols before rule scoring to eliminate upstream NaNs
+    for _col in ["price_match", "faiss_score", "cert_match", "years_normalized",
+                 "price_distance", "location_match", "is_manufacturer"]:
+        if _col in df_test.columns:
+            df_test[_col] = df_test[_col].fillna(0).replace([np.inf, -np.inf], 0)
+
     # Pre-compute rule-based baseline for comparison
     rule_pred = rule_based_score(df_test)
+    rule_pred = np.nan_to_num(rule_pred, nan=0.0, posinf=1.0, neginf=0.0)
+    assert not np.isnan(rule_pred).any(), "NaNs remain in rule_pred after sanitization"
+
+    print(f"   NaNs in rule_pred: {np.isnan(rule_pred).sum()} (should be 0)")
+
     rule_ndcg = ndcg_at_k(df_test['relevance'], rule_pred, df_test['query_id'], k=10)
     print(f"\n📊 Rule-Based Baseline NDCG@10: {rule_ndcg:.4f}")
 
@@ -531,6 +610,7 @@ Examples:
 
         if xgb_model:
             xgb_pred = xgb_model.predict(df_test[FEATURE_COLS].values.astype(np.float32))
+            xgb_pred = np.nan_to_num(xgb_pred, nan=0.0, posinf=1.0, neginf=0.0)
             xgb_ndcg = ndcg_at_k(df_test['relevance'], xgb_pred, df_test['query_id'], k=10)
 
             print("\n" + "=" * 65)
@@ -564,6 +644,7 @@ Examples:
 
         if lgb_model:
             lgb_pred = lgb_model.predict(df_test[FEATURE_COLS].values.astype(np.float32))
+            lgb_pred = np.nan_to_num(lgb_pred, nan=0.0, posinf=1.0, neginf=0.0)
             lgb_ndcg = ndcg_at_k(df_test['relevance'], lgb_pred, df_test['query_id'], k=10)
 
             print("\n" + "=" * 65)

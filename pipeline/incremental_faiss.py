@@ -37,9 +37,9 @@ from config import cfg
 # ------------------------------------------------------------
 torch.backends.cudnn.benchmark = True
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+MODEL_NAME = "all-mpnet-base-v2"   # Upgraded to match retriever (was all-MiniLM-L6-v2)
 
-BATCH_SIZE = 256
+BATCH_SIZE = 128                    # Reduced from 256 — mpnet is larger, avoids OOM
 
 INDEX_CHUNK_SIZE = 10000
 
@@ -155,7 +155,7 @@ def incremental_update():
         device=device
     )
 
-    model.max_seq_length = 128
+    model.max_seq_length = 256  # Match retriever setting
 
     # ------------------------------------------------------------
     # Create sample embedding
@@ -211,8 +211,11 @@ def incremental_update():
             batch_size=BATCH_SIZE,
             show_progress_bar=False,
             convert_to_numpy=True,
-            normalize_embeddings=True
+            normalize_embeddings=True   # unit-norm embeddings for cosine similarity
         ).astype(np.float32)
+
+        # Explicit L2 normalization — guarantees IndexFlatIP computes true cosine similarity
+        faiss.normalize_L2(embeddings)
 
         # Add directly to FAISS
         index.add(embeddings)

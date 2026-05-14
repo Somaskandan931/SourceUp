@@ -80,6 +80,8 @@ def load_data() -> pd.DataFrame:
             "Run: python backend/app/models/train_ranker.py"
         )
     df = pd.read_csv(TRAIN_DATA)
+    # FIX: Normalize column names — 'Product Name' → 'product_name', etc.
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     df["relevance"] = df["relevance"].round().clip(0, 5).astype(int)
     return df
 

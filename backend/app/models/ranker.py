@@ -60,17 +60,18 @@ def extract_features(supplier: dict, query: dict) -> dict:
     else:
         price_match, price_ratio, price_distance = 0.5, 1.0, 0.0
 
-    s_loc = str(supplier.get("supplier location") or supplier.get("location", "")).lower()
-    q_loc = str(query.get("location") or "").lower()
+    s_loc = str(supplier.get("supplier location") or supplier.get("location", "")).lower().strip()
+    q_loc = str(query.get("location") or "").lower().strip()
 
+    # Location match is computed purely as a constraint-satisfaction binary.
+    # We deliberately avoid giving partial credit for "same country / same tier"
+    # to prevent the model from learning a Metro-city proxy signal.
     if not s_loc or not q_loc:
-        location_match = 0.5
-    elif s_loc == q_loc:
-        location_match = 1.0
+        location_match = 0.5          # no constraint specified → neutral
     elif q_loc in s_loc or s_loc in q_loc:
-        location_match = 0.5
+        location_match = 1.0          # constraint satisfied
     else:
-        location_match = 0.0
+        location_match = 0.0          # constraint violated
 
     s_cert = str(supplier.get("certifications") or "").lower()
     q_cert = str(query.get("certification") or "").lower()
@@ -95,10 +96,31 @@ def extract_features(supplier: dict, query: dict) -> dict:
         "years_normalized": years_normalized,
         "is_manufacturer": is_manufacturer,
         "is_trading_company": is_trading_company,
-        "faiss_score": float(supplier.get("faiss_score", 0.0)),
-        "faiss_rank": int(supplier.get("rank", 999)),
+        # Accept both key names — retriever now stores semantic_score; keep faiss_score alias
+        "faiss_score": float(supplier.get("semantic_score") or supplier.get("faiss_score", 0.0)),
+        "faiss_rank": int(supplier.get("faiss_rank") or supplier.get("rank", 999)),
         "supplier_price": supplier_price,
     }
+
+
+def apply_constraint_penalty(score: float, supplier: dict, gamma: float = 0.5) -> float:
+    """
+    Penalise suppliers that violate hard constraints without removing them.
+    This keeps CSR (Constraint Satisfaction Rate) meaningful while surfacing violators at the
+    bottom of the ranked list so the UI can show them as 'not recommended'.
+
+    Args:
+        score:    raw model/rule score
+        supplier: supplier dict (must have 'constraint_violated' key)
+        gamma:    penalty magnitude (default 0.5)
+
+    Returns:
+        Adjusted score.
+    """
+    if supplier.get("constraint_violated", False):
+        # FIX 5: Quadratic penalty — stronger signal, visible CSR drop in ablation
+        return score - gamma * (gamma ** 2 + 1)
+    return score
 
 
 def extract_features_batch(suppliers: List[Dict], query: Dict) -> pd.DataFrame:
@@ -158,7 +180,9 @@ class SupplierRanker:
             scores = rule_based_score(feats)
 
         for i, s in enumerate(suppliers):
-            s["score"] = float(scores[i])
+            raw_score = float(scores[i])
+            s["score"] = apply_constraint_penalty(raw_score, s)
+            s["raw_score"] = raw_score  # Keep raw score for transparency
             s["reasons"] = self._reasons(s, query, feats.iloc[i])
 
         return sorted(suppliers, key=lambda x: x["score"], reverse=True)

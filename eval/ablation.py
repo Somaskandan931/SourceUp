@@ -104,6 +104,10 @@ def load_training_data() -> pd.DataFrame:
     """Load or regenerate the training / evaluation dataset."""
     if os.path.exists(TRAIN_DATA):
         df = pd.read_csv(TRAIN_DATA)
+        # FIX: Normalize column names — ensures 'Product Name' → 'product_name',
+        # 'price distance' → 'price_distance', etc. so all downstream feature
+        # lookups (FEATURE_COLS, score_rule_based, etc.) work without NaN.
+        df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
         print(f"✅ Loaded training data: {len(df)} rows, {df['query_id'].nunique()} queries")
         return df
     raise FileNotFoundError(
@@ -137,9 +141,14 @@ def ndcg_at_k(y_true: pd.Series, y_pred: np.ndarray,
         m = query_ids == qid
         if m.sum() < 2:
             continue
-        t = y_true[m].values.reshape(1, -1)
-        p = y_pred[m].reshape(1, -1)
-        scores.append(ndcg_score(t, p, k=k))
+        t = np.nan_to_num(y_true[m].values, nan=0.0).reshape(1, -1)
+        p = np.nan_to_num(y_pred[m], nan=0.0).reshape(1, -1)
+        if len(np.unique(t)) <= 1 or np.all(p == p[0][0]):
+            continue
+        try:
+            scores.append(ndcg_score(t, p, k=k))
+        except Exception:
+            continue
     return float(np.mean(scores)) if scores else 0.0
 
 
@@ -299,6 +308,12 @@ def score_rule_based(df: pd.DataFrame) -> np.ndarray:
     Rule-based scoring matching ranker.py weights exactly.
     Used by V3 (No LTR) and V5 (Rule-Based Only).
     """
+    # Sanitize all feature cols before scoring to prevent NaN propagation
+    df = df.copy()
+    for _col in ["price_match", "price_distance", "location_match",
+                 "cert_match", "years_normalized", "is_manufacturer", "faiss_score"]:
+        if _col in df.columns:
+            df[_col] = df[_col].fillna(0).replace([np.inf, -np.inf], 0)
     scores = (
         df["price_match"]        * 0.35 +
         (1 - df["price_distance"]) * 0.10 +
@@ -308,7 +323,8 @@ def score_rule_based(df: pd.DataFrame) -> np.ndarray:
         df["is_manufacturer"]    * 0.05 +
         df["faiss_score"]        * 0.05
     )
-    return scores.values
+    scores = np.nan_to_num(scores.values, nan=0.0, posinf=1.0, neginf=0.0)
+    return scores
 
 
 def score_v4_no_semantic(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndarray:

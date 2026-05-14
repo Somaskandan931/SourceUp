@@ -93,6 +93,11 @@ def load_data() -> pd.DataFrame:
             "Run: python backend/app/models/train_ranker.py"
         )
     df = pd.read_csv(TRAIN_DATA)
+    # FIX: Normalize column names at load time — 'Product Name' → 'product_name',
+    # 'price distance' → 'price_distance', etc.  All scorer functions (score_bm25,
+    # score_sbert_cosine, score_rule_based_default, full_eval) then receive
+    # consistent underscore-lowercase column names without needing per-function copies.
+    df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     df["relevance"] = df["relevance"].round().clip(0, 5).astype(int)
     print(f"✅ Loaded: {len(df)} rows, {df['query_id'].nunique()} queries")
     return df
@@ -246,8 +251,14 @@ def score_sourceup(df_test: pd.DataFrame) -> np.ndarray:
 
 
 def score_rule_based_default(df: pd.DataFrame) -> np.ndarray:
-    """B3 / Fallback rule-based scorer matching ranker.py."""
-    return (
+    """B3 / Fallback rule-based scorer matching ranker.py — NaN-safe."""
+    import numpy as _np
+    df = df.copy()
+    for _c in ["price_match", "price_distance", "location_match",
+               "cert_match", "years_normalized", "is_manufacturer", "faiss_score"]:
+        if _c in df.columns:
+            df[_c] = df[_c].fillna(0).replace([float('inf'), float('-inf')], 0)
+    scores = (
         df["price_match"]          * 0.35 +
         (1 - df["price_distance"]) * 0.10 +
         df["location_match"]       * 0.20 +
@@ -256,6 +267,7 @@ def score_rule_based_default(df: pd.DataFrame) -> np.ndarray:
         df["is_manufacturer"]      * 0.05 +
         df["faiss_score"]          * 0.05
     ).values
+    return _np.nan_to_num(scores, nan=0.0, posinf=1.0, neginf=0.0)
 
 
 def score_bm25 ( df_train: pd.DataFrame, df_test: pd.DataFrame ) -> np.ndarray :
@@ -283,14 +295,24 @@ def score_bm25 ( df_train: pd.DataFrame, df_test: pd.DataFrame ) -> np.ndarray :
         df_train = df_train.rename( columns={'productname' : 'product_name'} )
 
     # Check if product name column exists
-    if "product_name" not in df_test.columns :
-        print( "   ⚠️  'product_name' column missing — returning uniform BM25 score" )
-        print( f"   Available columns: {list( df_test.columns )[:5]}..." )
-        return np.full( len( df_test ), 0.5 )
+    # FIX 2: Use query_text as fallback when product_name missing
+    if "product_name" not in df_test.columns:
+        text_col_train = "query_text" if "query_text" in df_train.columns else None
+        text_col_test  = "query_text" if "query_text" in df_test.columns  else None
+        if text_col_train is None or text_col_test is None:
+            print( "   ⚠️  No text column for BM25 — using supplier_text fallback" )
+            for col in ["supplier_text", "supplier_name", "description"]:
+                if col in df_test.columns:
+                    text_col_train = text_col_test = col
+                    break
+        if text_col_train is None:
+            return np.full( len( df_test ), 0.5 )
+    else:
+        text_col_train = text_col_test = "product_name"
 
     # Build corpus and queries
-    corpus = df_train["product_name"].fillna( "unknown" ).astype( str ).tolist()
-    queries = df_test["product_name"].fillna( "unknown" ).astype( str ).tolist()
+    corpus  = df_train[text_col_train].fillna( "unknown" ).astype( str ).tolist()
+    queries = df_test[text_col_test].fillna( "unknown" ).astype( str ).tolist()
 
     if BM25_AVAILABLE :
         tokenized_corpus = [doc.lower().split() for doc in corpus]

@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
 ))))
 
 import faiss
+from sklearn.preprocessing import normalize as sk_normalize
 from sentence_transformers import SentenceTransformer
 from config import cfg
 
@@ -31,9 +32,10 @@ _meta = None
 def get_model() -> SentenceTransformer:
     global _model
     if _model is None:
-        logger.info("Loading SBERT model 'all-MiniLM-L6-v2' for PRIMARY retrieval...")
-        _model = SentenceTransformer("all-MiniLM-L6-v2")
-        _model.max_seq_length = 128
+        # FIX 1: Upgraded from all-MiniLM-L6-v2 → all-mpnet-base-v2 (higher quality embeddings)
+        logger.info("Loading SBERT model 'all-mpnet-base-v2' for PRIMARY retrieval...")
+        _model = SentenceTransformer("all-mpnet-base-v2")
+        _model.max_seq_length = 256  # FIX 1: Increased from 128 → 256
         logger.info("✅ SBERT model loaded")
     return _model
 
@@ -51,12 +53,26 @@ def load_index():
 
     _index = faiss.read_index(index_path)
     _meta = pd.read_csv(meta_path)
-    _meta.columns = [c.strip().lower() for c in _meta.columns]
+    _meta.columns = [c.strip().lower().replace(" ", "_") for c in _meta.columns]
+
+    # FIX 4: Log index type to confirm IndexFlatIP (cosine) vs IndexFlatL2
+    logger.info(f"Index type: {type(_index)}")
+
+    # FIX 2: Enriched supplier_text with location and price to better match user query intent.
+    # Also lowercased for consistency with query preprocessing.
+    _meta["supplier_text"] = (
+        _meta.get("supplier_name", pd.Series([""] * len(_meta))).fillna("").astype(str) + " " +
+        _meta.get("category", pd.Series([""] * len(_meta))).fillna("").astype(str) + " " +
+        _meta.get("description", pd.Series([""] * len(_meta))).fillna("").astype(str) + " " +
+        _meta.get("location", pd.Series([""] * len(_meta))).fillna("").astype(str) + " " +
+        _meta.get("price", pd.Series([""] * len(_meta))).fillna("").astype(str)
+    ).str.lower().str.strip()  # FIX 2: lowercase + strip for alignment with query preprocessing
+
     logger.info(f"✅ FAISS index loaded: {_index.ntotal:,} vectors")
     return _index, _meta
 
 
-def retrieve(query: str, k: int = 100) -> List[Dict]:
+def retrieve(query: str, k: int = 200) -> List[Dict]:  # FIX 7: Increased default k 100 → 200
     """
     PRIMARY RETRIEVAL: SBERT + FAISS returns top-k candidates.
     These will be re-ranked by LTR (XGBRanker).
@@ -66,24 +82,56 @@ def retrieve(query: str, k: int = 100) -> List[Dict]:
     model = get_model()
     index, meta = load_index()
 
-    # Encode query
-    query_emb = model.encode([query], convert_to_numpy=True).astype(np.float32)
+    # FIX 5: Normalize query text before encoding
+    query = query.lower().strip()
+
+    # FIX 5: Encode with normalize_embeddings=True for guaranteed unit vectors
+    query_emb = model.encode(
+        [query],
+        convert_to_numpy=True,
+        normalize_embeddings=True
+    ).astype(np.float32)
+    # Double-check: apply sklearn L2 normalize to guarantee unit norm
+    query_emb = sk_normalize(query_emb, norm='l2')
+
+    # Note: faiss.normalize_L2 is now redundant given normalize_embeddings=True above,
+    # but kept as a safety guarantee.
     faiss.normalize_L2(query_emb)
 
     # Search
     distances, indices = index.search(query_emb, min(k, index.ntotal))
 
-    # Convert L2 distance to similarity: similarity = 1 / (1 + distance)
+    # FIX 3: Removed wrong 1/(1+dist) transformation.
+    # For IndexFlatIP (cosine similarity), dist IS the similarity score directly.
+    # If using IndexFlatL2, use: semantic_score = -float(dist)
+    raw_scores = distances[0].astype(float)
+
+    # FIX 5: Normalize semantic scores to [0, 1] so downstream features are on a consistent scale
+    score_min = float(raw_scores.min()) if len(raw_scores) > 0 else 0.0
+    score_max = float(raw_scores.max()) if len(raw_scores) > 0 else 1.0
+    score_range = score_max - score_min if score_max > score_min else 1.0
+
     results = []
-    for rank, (dist, idx) in enumerate(zip(distances[0], indices[0])):
+    for rank, (dist, idx) in enumerate(zip(raw_scores, indices[0])):
         if idx < len(meta):
             s = meta.iloc[idx].to_dict()
-            s["faiss_score"] = 1.0 / (1.0 + float(dist))  # This is SBERT similarity
+            # Normalized cosine similarity in [0, 1]
+            s["semantic_score"] = float((dist - score_min) / score_range)
+            s["faiss_score"] = s["semantic_score"]   # keep alias for backward compat
             s["faiss_rank"] = rank + 1
             s["_index"] = int(idx)
+            # Guarantee all ranking-critical fields exist with safe defaults
+            for field, default in [
+                ("price", None), ("price min", None),
+                ("supplier location", ""), ("location", ""),
+                ("certifications", ""), ("years with gs", 0),
+            ]:
+                if s.get(field) is None:
+                    s[field] = default
             results.append(s)
 
-    logger.info(f"✅ Retrieved {len(results)} candidates (top score: {results[0]['faiss_score']:.4f})")
+    if results:
+        logger.info(f"✅ Retrieved {len(results)} candidates (top score: {results[0]['semantic_score']:.4f})")
     return results
 
 
