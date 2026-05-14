@@ -12,12 +12,17 @@ import time
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Any
 import traceback
 import pandas as pd
 import math
+import sys
+from pathlib import Path
 
-from backend.app.models.retriever import retrieve, retrieve_hybrid
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from backend.app.models.retriever import retrieve, retrieve_hybrid, retrieve_bm25, load_index
 from backend.app.models.ranker import get_ranker, extract_features_batch
 from backend.app.models.constraint_engine import get_constraint_engine
 from backend.app.services.decision_trace import get_decision_trace
@@ -31,6 +36,46 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ============================================================================
+# REQUEST MODELS
+# ============================================================================
+
+class SearchQuery(BaseModel):
+    """Request model for supplier search with SME constraints"""
+    # Core search
+    product: str
+
+    # Price constraints
+    max_price: Optional[float] = None
+    moq_budget: Optional[float] = None
+
+    # Location preferences
+    location: Optional[str] = None
+    location_mandatory: Optional[bool] = False
+
+    # Quality requirements
+    certification: Optional[str] = None
+    required_certifications: Optional[List[str]] = None
+    min_years_experience: Optional[int] = None
+
+    # Delivery constraints
+    max_lead_time: Optional[int] = None
+
+    # Retrieval mode
+    retrieval_mode: Optional[str] = "hybrid"  # "faiss", "bm25", "hybrid"
+
+    # Feature flags
+    enable_explanations: Optional[bool] = True
+    enable_what_if: Optional[bool] = False
+
+
+class WhatIfQuery(BaseModel):
+    """Request model for what-if simulation"""
+    product: str
+    constraints: Dict[str, Any]
+    scenario: str
 
 
 # ============================================================================
@@ -92,44 +137,42 @@ def safe_int(value, default=None):
         return default
 
 
-# ============================================================================
-# REQUEST MODELS
-# ============================================================================
-
-class SearchQuery(BaseModel):
-    """Request model for supplier search with SME constraints"""
-    # Core search
-    product: str
-
-    # Price constraints
-    max_price: Optional[float] = None
-    moq_budget: Optional[float] = None
-
-    # Location preferences
-    location: Optional[str] = None
-    location_mandatory: Optional[bool] = False
-
-    # Quality requirements
-    certification: Optional[str] = None
-    required_certifications: Optional[List[str]] = None
-    min_years_experience: Optional[int] = None
-
-    # Delivery constraints
-    max_lead_time: Optional[int] = None
-
-    # Retrieval mode
-    retrieval_mode: Optional[str] = "hybrid"  # "faiss", "bm25", "hybrid"
-
-    # Feature flags
-    enable_explanations: Optional[bool] = True
-    enable_what_if: Optional[bool] = False
+def get_supplier_name(supplier: Dict) -> Optional[str]:
+    """Extract supplier name from various possible field names. Returns None if not found."""
+    # NOTE: retriever.py normalises columns with .replace(" ", "_"), so we must
+    # check underscore variants FIRST; space-variants kept for raw/un-normalised data.
+    raw = (
+        supplier.get("supplier_name") or
+        supplier.get("supplier name") or
+        supplier.get("Supplier Name") or
+        supplier.get("company_name") or
+        supplier.get("company name") or
+        supplier.get("Company Name") or
+        supplier.get("company") or
+        supplier.get("name") or
+        supplier.get("brand") or
+        supplier.get("manufacturer") or
+        None
+    )
+    if not raw:
+        return None
+    cleaned = str(raw).strip()
+    # Reject known placeholder values
+    if not cleaned or cleaned.lower() in {"unknown supplier", "unknown", "n/a", "nan", "-", "none"}:
+        return None
+    return cleaned
 
 
-class WhatIfQuery(BaseModel):
-    """Request model for what-if simulation"""
-    product: str
-    constraints: Dict
-    scenario: str
+def get_product_name(supplier: Dict, default: str = "Product") -> str:
+    """Extract product name from various possible field names."""
+    return (
+        supplier.get("product_name") or
+        supplier.get("product name") or
+        supplier.get("Product Name") or
+        supplier.get("product") or
+        supplier.get("Product") or
+        default
+    )
 
 
 # ============================================================================
@@ -157,7 +200,6 @@ async def recommend(q: SearchQuery):
             if q.retrieval_mode == "hybrid":
                 candidates = retrieve_hybrid(q.product, k=100, alpha=0.7)
             elif q.retrieval_mode == "bm25":
-                from backend.app.models.retriever import retrieve_bm25
                 candidates = retrieve_bm25(q.product, k=100)
             else:
                 candidates = retrieve(q.product, k=100)
@@ -174,6 +216,7 @@ async def recommend(q: SearchQuery):
                 "results": [],
                 "metadata": {
                     "total_candidates": 0,
+                    "after_constraints": 0,
                     "latency_ms": round((time.time() - start_time) * 1000, 2)
                 }
             }
@@ -199,7 +242,7 @@ async def recommend(q: SearchQuery):
                 "min_years_experience": q.min_years_experience
             }
 
-            active_constraints = [k for k, v in constraints.items() if v is not None]
+            active_constraints = [k for k, v in constraints.items() if v is not None and v != [] and v is not False]
             logger.info(f"Active constraints: {active_constraints}")
 
             viable_suppliers = constraint_engine.apply_constraints(candidates, constraints)
@@ -207,7 +250,7 @@ async def recommend(q: SearchQuery):
 
             filter_summary = constraint_engine.get_filter_summary()
             logger.info(f"✅ {len(viable_suppliers)} suppliers pass constraints ({constraint_time:.1f}ms)")
-            logger.info(f"   Filtered out: {filter_summary['total_filtered']}")
+            logger.info(f"   Filtered out: {filter_summary.get('total_filtered', 0)}")
 
         except Exception as e:
             logger.error(f"Constraint filtering failed: {str(e)}", exc_info=True)
@@ -218,7 +261,7 @@ async def recommend(q: SearchQuery):
             return {
                 "results": [],
                 "message": "No suppliers meet your constraints",
-                "filters_applied": filter_summary['filters_applied'],
+                "filters_applied": filter_summary.get('filters_applied', []),
                 "suggestion": "Try relaxing some constraints",
                 "metadata": {
                     "total_candidates": len(candidates),
@@ -246,7 +289,7 @@ async def recommend(q: SearchQuery):
             ranked_suppliers = ranker.rank(viable_suppliers, query_dict)
             ranking_time = (time.time() - step_start) * 1000
             logger.info(f"✅ Ranked {len(ranked_suppliers)} suppliers ({ranking_time:.1f}ms)")
-            logger.info(f"   Ranking method: {ranker.model_type if ranker.use_ml else 'rule-based'}")
+            logger.info(f"   Ranking method: {ranker.model_type if hasattr(ranker, 'model_type') and ranker.use_ml else 'rule-based'}")
 
         except Exception as e:
             logger.error(f"Ranking failed: {str(e)}", exc_info=True)
@@ -257,64 +300,84 @@ async def recommend(q: SearchQuery):
         # ====================================================================
         step_start = time.time()
         results = []
+        features_df = None
 
         try:
             decision_tracer = get_decision_trace()
 
-            if q.enable_explanations:
+            if q.enable_explanations and len(ranked_suppliers) > 0:
                 logger.info("📋 Generating decision traces...")
-                features_df = extract_features_batch(ranked_suppliers, query_dict)
+                features_df = extract_features_batch(ranked_suppliers[:50], query_dict)
 
             for idx, supplier in enumerate(ranked_suppliers[:20], 1):
                 # Basic supplier info
-                supplier_name = (
-                    supplier.get("supplier name") or
-                    supplier.get("Supplier Name") or
-                    "Unknown Supplier"
-                )
-
-                product_name = (
-                    supplier.get("product name") or
-                    supplier.get("Product Name") or
-                    q.product
-                )
+                supplier_name = get_supplier_name(supplier)
+                # Skip suppliers with no resolvable name
+                if not supplier_name:
+                    continue
+                supplier_name = supplier_name  # already a clean string
+                product_name = get_product_name(supplier, q.product)
 
                 # Format display fields with safe conversions
                 price_display = supplier.get("price", "Contact for pricing")
-                location_display = supplier.get("supplier location", "")
+                location_display = (supplier.get("supplier_location") or supplier.get("supplier location") or supplier.get("location") or "")
 
-                moq = safe_int(supplier.get("min order qty"))
+                moq = safe_int(supplier.get("min order qty") or supplier.get("moq"))
                 unit = supplier.get("unit", "pieces")
                 moq_display = f"{moq} {unit}" if moq else None
 
-                lead_time = safe_int(supplier.get("lead time"))
+                lead_time = safe_int(supplier.get("lead time") or supplier.get("lead_time"))
                 lead_time_display = f"{lead_time} days" if lead_time else None
 
-                product_url = supplier.get("product url", "")
+                product_url = supplier.get("product url", "") or supplier.get("url", "")
 
                 # Generate decision trace
                 decision_trace = None
-                if q.enable_explanations:
-                    raw_trace = decision_tracer.generate_trace(
-                        supplier=supplier,
-                        query=query_dict,
-                        features=features_df.iloc[idx - 1],
-                        final_score=supplier['score'],
-                        constraint_results=supplier.get('constraint_results')
-                    )
-                    decision_trace = clean_dict(raw_trace) if raw_trace else None
+                if q.enable_explanations and features_df is not None and idx - 1 < len(features_df):
+                    try:
+                        raw_trace = decision_tracer.generate_trace(
+                            supplier=supplier,
+                            query=query_dict,
+                            features=features_df.iloc[idx - 1],
+                            final_score=supplier.get('score', 0),
+                            constraint_results=supplier.get('constraint_results')
+                        )
+                        decision_trace = clean_dict(raw_trace) if raw_trace else None
+                    except Exception as trace_error:
+                        logger.warning(f"Trace generation failed for {supplier_name}: {trace_error}")
 
                 # Calculate confidence score
                 constraint_score = safe_float(supplier.get('constraint_score', 1.0), 1.0)
                 supplier_score = safe_float(supplier.get('score', 0.0), 0.0)
                 confidence = constraint_score * supplier_score
 
+                # Get reasons from decision trace or generate basic ones
+                reasons = []
+                if decision_trace and decision_trace.get('summary'):
+                    reasons = decision_trace['summary']
+                elif supplier.get('reasons'):
+                    reasons = supplier['reasons']
+                else:
+                    # Generate basic reasons
+                    if q.max_price and price_display != "Contact for pricing":
+                        try:
+                            price_val = float(price_display) if isinstance(price_display, (int, float)) else 0
+                            if price_val <= q.max_price:
+                                reasons.append(f"Within budget (${price_val})")
+                        except:
+                            pass
+                    if location_display and q.location and q.location.lower() in location_display.lower():
+                        reasons.append(f"Located in {location_display}")
+                    if q.certification and supplier.get("certifications"):
+                        if q.certification.lower() in str(supplier.get("certifications")).lower():
+                            reasons.append(f"{q.certification.upper()} certified")
+
                 result = {
-                    "supplier": str(supplier_name),
+                    "supplier": supplier_name,
                     "product": str(product_name),
                     "score": safe_float(supplier_score, 0.0),
                     "rank": idx,
-                    "reasons": supplier.get('reasons', []),
+                    "reasons": reasons[:5],  # Limit to top 5 reasons
                     "price": str(price_display),
                     "location": str(location_display),
                     "moq": moq_display,
@@ -332,7 +395,7 @@ async def recommend(q: SearchQuery):
 
         except Exception as e:
             logger.error(f"Decision trace generation failed: {str(e)}", exc_info=True)
-            raise
+            # Don't raise - return results without traces
 
         # ====================================================================
         # STEP 5: What-If Scenarios (Optional)
@@ -382,8 +445,8 @@ async def recommend(q: SearchQuery):
             "metadata": {
                 "total_candidates": len(candidates),
                 "after_constraints": len(viable_suppliers),
-                "filters_applied": filter_summary['filters_applied'],
-                "ranking_method": ranker.model_type if ranker.use_ml else "rule-based",
+                "filters_applied": filter_summary.get('filters_applied', []),
+                "ranking_method": ranker.model_type if hasattr(ranker, 'model_type') and ranker.use_ml else "rule-based",
                 "retrieval_mode": q.retrieval_mode,
                 "latency_ms": round(total_time, 2),
                 "timing_breakdown": {
@@ -409,7 +472,6 @@ async def recommend(q: SearchQuery):
         error_msg = f"Recommendation failed: {str(e)}"
         logger.error(error_msg, exc_info=True)
 
-        # Return error with timing even on failure
         total_time = (time.time() - start_time) * 1000
         raise HTTPException(
             status_code=500,
@@ -430,24 +492,39 @@ async def what_if_simulation(q: WhatIfQuery):
     try:
         logger.info(f"🔮 What-if simulation: {q.scenario}")
 
+        # Retrieve candidates
         candidates = retrieve(q.product, k=50)
 
         if not candidates:
-            logger.warning(f"No candidates found for what-if: {q.product}")
-            return {"error": "No candidates found"}
+            return {"error": "No candidates found", "scenario": q.scenario}
 
+        # Apply constraints
         constraint_engine = get_constraint_engine()
         viable_suppliers = constraint_engine.apply_constraints(candidates, q.constraints)
 
+        if not viable_suppliers:
+            return {
+                "error": "No suppliers meet the constraints",
+                "scenario": q.scenario,
+                "total_candidates": len(candidates),
+                "after_constraints": 0
+            }
+
+        # Run simulation
         simulator = get_what_if_simulator()
         result = simulator.simulate_trade_off(viable_suppliers, q.constraints, q.scenario)
 
-        logger.info(f"✅ What-if simulation complete")
+        # Add metadata
+        result["total_candidates"] = len(candidates)
+        result["after_constraints"] = len(viable_suppliers)
+        result["scenario"] = q.scenario
+
+        logger.info(f"✅ What-if simulation complete: {len(viable_suppliers)} suppliers analyzed")
         return clean_dict(result)
 
     except Exception as e:
         logger.error(f"What-if simulation failed: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"error": str(e), "scenario": q.scenario if hasattr(q, 'scenario') else "unknown"}
 
 
 # ============================================================================
@@ -455,7 +532,7 @@ async def what_if_simulation(q: WhatIfQuery):
 # ============================================================================
 
 @router.post("/compare")
-async def compare_suppliers(supplier_ids: List[int], query: Dict):
+async def compare_suppliers(supplier_ids: List[int], query: Dict[str, Any]):
     """Compare two suppliers side-by-side"""
     try:
         if len(supplier_ids) != 2:
@@ -464,8 +541,10 @@ async def compare_suppliers(supplier_ids: List[int], query: Dict):
 
         logger.info(f"🔍 Comparing suppliers: {supplier_ids}")
 
-        from backend.app.models.retriever import load_index
-        _, meta = load_index()
+        index, meta = load_index()
+
+        if supplier_ids[0] >= len(meta) or supplier_ids[1] >= len(meta):
+            return {"error": "Invalid supplier IDs"}
 
         supplier_a = meta.iloc[supplier_ids[0]].to_dict()
         supplier_b = meta.iloc[supplier_ids[1]].to_dict()
@@ -477,17 +556,17 @@ async def compare_suppliers(supplier_ids: List[int], query: Dict):
         features_df = extract_features_batch(ranked, query)
 
         trace_a = decision_tracer.generate_trace(
-            ranked[0], query, features_df.iloc[0], ranked[0]['score']
+            ranked[0], query, features_df.iloc[0], ranked[0].get('score', 0)
         )
         trace_b = decision_tracer.generate_trace(
-            ranked[1], query, features_df.iloc[1], ranked[1]['score']
+            ranked[1], query, features_df.iloc[1], ranked[1].get('score', 0)
         )
 
         comparison = decision_tracer.generate_comparative_trace(
             ranked[0], ranked[1], trace_a, trace_b
         )
 
-        logger.info(f"✅ Comparison complete - Winner: {comparison['winner']}")
+        logger.info(f"✅ Comparison complete - Winner: {comparison.get('winner', 'Unknown')}")
         return clean_dict(comparison)
 
     except Exception as e:
@@ -505,7 +584,6 @@ async def test_recommend():
     try:
         logger.info("Testing recommendation system")
 
-        from backend.app.models.retriever import load_index
         index, meta = load_index()
 
         sample = meta.iloc[0].to_dict() if len(meta) > 0 else {}
@@ -538,7 +616,6 @@ async def get_stats():
     try:
         logger.info("Fetching system statistics")
 
-        from backend.app.models.retriever import load_index
         index, meta = load_index()
 
         total = len(meta)
@@ -546,10 +623,14 @@ async def get_stats():
         locations = {}
         if 'supplier location' in meta.columns:
             locations = {str(k): int(v) for k, v in meta['supplier location'].value_counts().head(10).items()}
+        elif 'location' in meta.columns:
+            locations = {str(k): int(v) for k, v in meta['location'].value_counts().head(10).items()}
 
         categories = {}
         if 'category l1' in meta.columns:
             categories = {str(k): int(v) for k, v in meta['category l1'].value_counts().head(10).items()}
+        elif 'category' in meta.columns:
+            categories = {str(k): int(v) for k, v in meta['category'].value_counts().head(10).items()}
 
         logger.info(f"Stats: {total:,} suppliers, {len(locations)} locations")
 

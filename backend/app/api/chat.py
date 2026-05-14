@@ -6,10 +6,16 @@ Conversational interface for supplier search with AI assistance.
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import traceback
 import os
 from groq import Groq
+import sys
+from pathlib import Path
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
 from sourcebot.memory.session import get_session, set_session
 from sourcebot.nlu.parser import parse
 from backend.app.models.retriever import retrieve
@@ -26,21 +32,12 @@ def get_groq_client():
     global groq_client
     if groq_client is None:
         try:
-            # Try to get API key from environment
             api_key = os.getenv("GROQ_API_KEY")
 
-            # Debug output
-            print(f"🔍 Attempting to initialize Groq client...")
-            print(f"🔍 API Key found: {bool(api_key)}")
-            if api_key:
-                print(f"🔍 API Key starts with: {api_key[:10]}...")
-                print(f"🔍 API Key length: {len(api_key)}")
-
             if not api_key or api_key.strip() == "":
-                print("❌ GROQ_API_KEY is empty or not set")
+                print("⚠️ GROQ_API_KEY not set - chat will use fallback responses")
                 return None
 
-            # Initialize with explicit api_key parameter
             groq_client = Groq(api_key=api_key.strip())
             print("✅ Groq client initialized successfully")
         except Exception as e:
@@ -65,21 +62,14 @@ class ChatResponse(BaseModel):
 async def get_llm_response(query: str, context: dict = None) -> str:
     """
     Get response from Groq LLM for general/information queries.
-
-    Args:
-        query: User's question
-        context: Session context (location, product preferences, etc.)
-
-    Returns:
-        AI-generated response
     """
     try:
         client = get_groq_client()
 
-        # If client initialization failed, return fallback message
         if client is None:
             print("⚠️ Groq client not available, using fallback response")
-            return "I apologize, but I'm unable to process information queries at the moment. Please try asking about specific products or suppliers, or contact support for assistance."
+            return "I apologize, but I'm unable to process information queries at the moment. Please try asking about specific products or suppliers."
+
         system_prompt = """You are a helpful AI assistant for SourceUP, a B2B supplier sourcing platform.
 
 Your role is to help users with:
@@ -98,7 +88,6 @@ Guidelines:
 
 Keep responses under 300 words."""
 
-        # Add context if available
         user_message = query
         if context:
             context_parts = []
@@ -110,12 +99,11 @@ Keep responses under 300 words."""
                 context_parts.append(f"Certification requirement: {context['certification']}")
 
             if context_parts:
-                user_message = f"Context:\n" + "\n".join(context_parts) + f"\n\nQuestion: {query}"
+                user_message = "Context:\n" + "\n".join(context_parts) + f"\n\nQuestion: {query}"
 
         print(f"🤖 Calling Groq LLM...")
-        client = get_groq_client()
         response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",  # ✅ FIXED: Updated from llama-3.1-70b-versatile
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message}
@@ -145,7 +133,6 @@ def generate_response_message(session_state: dict, suppliers: List[dict]) -> str
     max_price = session_state.get("max_price")
     certification = session_state.get("certification", "")
 
-    # Build response message
     parts = [f"I found {len(suppliers)} supplier{'s' if len(suppliers) != 1 else ''} for {product}"]
 
     filters = []
@@ -170,62 +157,51 @@ async def chat(request: ChatRequest):
     try:
         print(f"\n💬 Chat message from {request.session_id}: {request.message}")
 
-        # Get current session state
         session_state = get_session(request.session_id)
         print(f"📦 Current session: {session_state}")
 
-        # Parse user message
         try:
             parsed_data = parse(request.message)
             print(f"🧠 Parsed: {parsed_data}")
         except Exception as parse_error:
-            print(f"⚠️  Parser error: {parse_error}")
+            print(f"⚠️ Parser error: {parse_error}")
             parsed_data = {"product": request.message, "intent": "unknown"}
 
-        # Determine intent
         intent = parsed_data.get("intent", "product_search")
         print(f"🎯 Intent: {intent}")
 
-        # Update session with new information (only non-None values)
+        # Update session with new information
         for key, value in parsed_data.items():
             if value is not None and key != "intent":
                 session_state[key] = value
 
         set_session(request.session_id, session_state)
-        print(f"💾 Updated session: {session_state}")
 
         # Handle different intents
         if intent == "information" or intent == "general":
-            # Use Groq LLM for knowledge/information queries
-            print(f"ℹ️  Processing as information query with LLM")
-
+            print(f"ℹ️ Processing as information query with LLM")
             llm_response = await get_llm_response(
                 query=request.message,
                 context=session_state
             )
-
             return ChatResponse(
                 message=llm_response,
                 suppliers=[],
                 session_id=request.session_id
             )
 
-        # Product search intent (existing logic)
-        # Check if we have enough information to search
+        # Product search intent
         if not session_state.get("product"):
-            # Use LLM to generate a helpful prompt
             llm_response = await get_llm_response(
                 query="User hasn't specified a product yet. Ask them what product or supplier they're looking for in a friendly way.",
                 context=session_state
             )
-
             return ChatResponse(
                 message=llm_response if llm_response and len(llm_response) < 200 else "What type of product or supplier are you looking for?",
                 suppliers=[],
                 session_id=request.session_id
             )
 
-        # Perform search (don't require location for GlobalSources data)
         print(f"🔍 Searching for: {session_state['product']}")
         candidates = retrieve(session_state["product"], k=50)
         print(f"✅ Found {len(candidates)} candidates")
@@ -251,15 +227,21 @@ async def chat(request: ChatRequest):
                 supplier_score = score(supplier, query_dict)
                 reasons = explain(supplier, query_dict)
 
-                # Get supplier details
                 supplier_name = (
                     supplier.get("supplier name") or
+                    supplier.get("Supplier Name") or
                     supplier.get("company name") or
-                    "Unknown Supplier"
+                    supplier.get("Company Name") or
+                    supplier.get("company") or
+                    supplier.get("name") or
+                    supplier.get("brand") or
+                    None
                 )
+                if not supplier_name or str(supplier_name).strip().lower() in {"unknown supplier","unknown","n/a","nan","-","none"}:
+                    continue
+                supplier_name = str(supplier_name).strip()
 
                 product_name = supplier.get('Product Name') or supplier.get('product name', '')
-
                 price = supplier.get("price", "Contact for pricing")
                 location = supplier.get("supplier location", "")
 
@@ -272,14 +254,12 @@ async def chat(request: ChatRequest):
                     "location": str(location)
                 })
             except Exception as e:
-                print(f"⚠️  Error processing supplier: {e}")
+                print(f"⚠️ Error processing supplier: {e}")
                 continue
 
-        # Sort by score
         results.sort(key=lambda x: x["score"], reverse=True)
         top_results = results[:5]
 
-        # Generate response message
         response_message = generate_response_message(session_state, top_results)
 
         print(f"✅ Returning {len(top_results)} suppliers")
@@ -305,7 +285,6 @@ def test_chat():
         test_sid = "test_123"
         set_session(test_sid, {"test": "data"})
         result = get_session(test_sid)
-
         return {
             "status": "ok",
             "session_test": result,

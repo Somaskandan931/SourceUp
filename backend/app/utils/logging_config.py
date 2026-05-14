@@ -1,24 +1,39 @@
 """
-Centralised Logging Configuration for SourceUp
------------------------------------------------
-Configure logging once at application entry point.
-All modules should use logging.getLogger(__name__).
+Logging Configuration for SourceUp
 """
-
 import logging
 import sys
+from pathlib import Path
 from typing import Optional
 
+# Global logger instance
+_logger = None
+_initialized = False
 
-def setup_logging ( level: str = "INFO", log_file: Optional[str] = None ) :
+
+def setup_logging(level: str = "INFO", log_file: Optional[str] = None):
     """
-    Configure logging for the entire application.
+    Setup logging configuration for the application.
 
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR)
-        log_file: Optional file path to write logs to
+        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        log_file: Path to log file (optional)
     """
-    log_level = getattr( logging, level.upper(), logging.INFO )
+    global _initialized
+
+    if _initialized:
+        return
+
+    # Convert level string to logging constant
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Remove existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
 
     # Create formatter
     formatter = logging.Formatter(
@@ -26,39 +41,46 @@ def setup_logging ( level: str = "INFO", log_file: Optional[str] = None ) :
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    # Configure root logger
-    root_logger = logging.getLogger()
-    root_logger.setLevel( log_level )
-
-    # Remove existing handlers to avoid duplicates
-    for handler in root_logger.handlers[:] :
-        root_logger.removeHandler( handler )
-
     # Console handler
-    console_handler = logging.StreamHandler( sys.stdout )
-    console_handler.setFormatter( formatter )
-    root_logger.addHandler( console_handler )
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
 
-    # File handler (if specified)
-    if log_file :
-        file_handler = logging.FileHandler( log_file, encoding='utf-8' )
-        file_handler.setFormatter( formatter )
-        root_logger.addHandler( file_handler )
+    # File handler (if log_file provided)
+    if log_file:
+        try:
+            # Ensure directory exists
+            log_path = Path(log_file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Set levels for noisy third-party loggers
-    logging.getLogger( "urllib3" ).setLevel( logging.WARNING )
-    logging.getLogger( "requests" ).setLevel( logging.WARNING )
-    logging.getLogger( "httpx" ).setLevel( logging.WARNING )
-    logging.getLogger( "sentence_transformers" ).setLevel( logging.WARNING )
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
+            print(f"📝 Logging to file: {log_file}")
+        except Exception as e:
+            print(f"⚠️ Could not create log file {log_file}: {e}")
 
-    logging.info( f"Logging configured: level={level}, file={log_file}" )
-    return root_logger
+    # Suppress noisy loggers
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+    _initialized = True
+    logging.info("Logging initialized")
 
 
-# Default logger for modules that don't have their own
-default_logger = logging.getLogger( __name__ )
+def get_logger(name: str) -> logging.Logger:
+    """
+    Get a logger instance for a module.
 
+    Args:
+        name: Logger name (usually __name__)
 
-def get_logger ( name: str ) -> logging.Logger :
-    """Get a logger with the specified name."""
-    return logging.getLogger( name )
+    Returns:
+        Logger instance
+    """
+    if not _initialized:
+        setup_logging()
+
+    return logging.getLogger(name)
