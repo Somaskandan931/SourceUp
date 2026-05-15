@@ -83,6 +83,89 @@ The key contributions of this work include:
 
 ![SourceUp-X Architecture](assets/sourceup_architecture.png)
 
+SourceUp-X follows a layered architecture that separates the user experience, API services, AI intelligence modules, persistence layer, and evaluation workflows. This structure makes the project easier to explain as both a working web application and a research-driven procurement recommendation framework.
+
+### 1. User Interface Layer
+
+The React frontend is the interaction layer for SME buyers. It provides supplier search, SourceBot chat, authentication, billing, and RFQ generation in a single-page application. Users can search for suppliers, inspect ranked results, open AI-assisted chat, generate RFQ emails, export formal RFQ PDFs, and manage their plan status.
+
+Key frontend modules include:
+
+- `AuthModal.jsx` for login, registration, and Google login initiation.
+- `SearchResultsView.jsx` for supplier search and ranked results.
+- `ChatTab.jsx` for SourceBot conversational procurement assistance.
+- `QuoteModal.jsx` for RFQ generation, refinement, PDF download, and printing.
+- `BillingModal.jsx` for UPI-based plan upgrade workflow.
+- `OAuthCallback.jsx` for Google OAuth token handling.
+
+### 2. API and Application Layer
+
+The FastAPI backend exposes the system capabilities through REST endpoints. It acts as the central coordination layer between the frontend, AI models, database, and external services. Each major workflow is separated into an API module:
+
+- `recommend.py` handles supplier retrieval, ranking, constraints, what-if analysis, and comparison.
+- `chat.py` powers SourceBot conversations using Groq LLMs.
+- `quote.py` generates RFQ drafts, refines drafts, and exports print-ready PDF documents.
+- `auth.py` manages registration, login, JWT authentication, Google OAuth, billing plans, and UPI order verification.
+
+This layer receives user requests, validates input with Pydantic models, calls the relevant service or model pipeline, and returns structured JSON or PDF responses.
+
+### 3. Procurement Intelligence Layer
+
+The recommendation engine is the core research component of SourceUp-X. It converts procurement search into a multi-stage ranking pipeline:
+
+```text
+User Query -> SBERT Embedding -> FAISS Retrieval -> Constraint Filtering -> Ranking -> SHAP Explanation -> Ranked Results
+```
+
+The pipeline works as follows:
+
+1. The user submits a procurement query.
+2. SBERT generates semantic embeddings for the query and supplier text.
+3. FAISS retrieves semantically relevant supplier candidates.
+4. The constraint engine applies business filters such as price, MOQ, location, certification, lead time, and supplier experience.
+5. Ranking models score candidates using procurement-specific features.
+6. SHAP and decision-trace services explain why suppliers were ranked highly.
+7. The frontend displays ranked suppliers with supporting decision context.
+
+This design moves the system beyond keyword matching and allows supplier discovery to consider semantic similarity, business constraints, and explainability together.
+
+### 4. Conversational and RFQ Intelligence Layer
+
+SourceBot and the RFQ wizard use Groq-powered LLM workflows to support procurement communication. SourceBot helps users refine procurement needs conversationally, while the RFQ wizard converts supplier and requirement details into professional supplier outreach.
+
+The RFQ workflow supports:
+
+- AI-generated RFQ email drafts.
+- tone selection and refinement,
+- copy-to-email workflow,
+- formal PDF generation with ReportLab,
+- print-ready signature blocks for offline supplier communication.
+
+### 5. Data and Persistence Layer
+
+SourceUp-X uses multiple storage components depending on the type of data:
+
+- MongoDB stores users, authentication metadata, billing orders, and plan state.
+- FAISS stores vector indexes for semantic supplier retrieval.
+- CSV/data pipeline outputs store cleaned supplier records and model-ready features.
+- Optional Redis/Memurai support can be used for conversational session memory.
+
+This separation keeps transactional application data separate from retrieval indexes and research evaluation artifacts.
+
+### 6. Evaluation and Research Layer
+
+The evaluation layer validates the recommendation system using baseline comparison, ablation studies, robustness testing, fairness analysis, and explainability analysis. These workflows are implemented through scripts under `eval/`, `evaluation/`, and generated plots under `data/eval/plots/`.
+
+This layer answers research questions such as:
+
+- Does semantic retrieval improve over keyword retrieval?
+- How much does each pipeline component contribute?
+- Does the ranking remain stable under noisy supplier data?
+- Are recommendations explainable at the feature level?
+- Does ranking behavior create supplier exposure imbalance?
+
+Together, these layers position SourceUp-X as a full-stack AI procurement platform with a research-backed recommendation pipeline rather than a simple supplier search interface.
+
 ## Technical Stack
 
 | Layer | Technology |
