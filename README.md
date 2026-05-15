@@ -15,7 +15,7 @@
 
 SourceUp-X is a research-grade procurement intelligence system that models supplier discovery as a constraint-aware semantic ranking problem. It combines semantic retrieval, learning-to-rank, explainable AI, conversational procurement assistance, RFQ generation, OAuth authentication, billing workflows, and a full-stack web application for practical SME procurement use cases.
 
-![SourceUp-X Architecture](assets/sourceup_architecture.png)
+
 
 ## Abstract
 
@@ -81,23 +81,7 @@ The key contributions of this work include:
 
 ## System Architecture
 
-```mermaid
-flowchart TD
-    U["User procurement query"] --> FE["React frontend"]
-    FE --> API["FastAPI backend"]
-    API --> REC["Recommendation API"]
-    API --> CHAT["SourceBot chat API"]
-    API --> RFQ["RFQ and PDF API"]
-    API --> AUTH["Auth and billing API"]
-    REC --> SBERT["SBERT embeddings"]
-    SBERT --> FAISS["FAISS vector retrieval"]
-    FAISS --> RANK["LightGBM / XGBRanker ranking"]
-    RANK --> XAI["SHAP explanations and decision traces"]
-    CHAT --> GROQ["Groq LLM"]
-    RFQ --> GROQ
-    RFQ --> PDF["ReportLab PDF export"]
-    AUTH --> DB["MongoDB"]
-```
+![SourceUp-X Architecture](assets/sourceup_architecture.png)
 
 ## Technical Stack
 
