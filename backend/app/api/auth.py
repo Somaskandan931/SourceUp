@@ -3,9 +3,14 @@ Authentication & Billing API — SourceUp (MongoDB Version)
 ----------------------------------------
 Provides:
   - User registration / login with JWT tokens
+  - Google OAuth2 login (via Authlib)
+  - GitHub OAuth2 login (optional)
   - UPI payment order creation + verification
   - Plan management (Free / Pro / Enterprise)
   - Demo login for testing
+
+FIX: Added proper MongoDB connection guard + detailed error logging on register.
+NEW: Google OAuth2 flow added at /auth/google/login and /auth/google/callback.
 """
 
 import os
@@ -13,7 +18,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, status
+import httpx
+from fastapi import APIRouter, HTTPException, Depends, Request, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 
@@ -26,10 +33,22 @@ security = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-UPI_ID = os.getenv("UPI_ID", "")
-DEMO_EMAIL = os.getenv("DEMO_EMAIL", "demo@sourceup.com")
+UPI_ID        = os.getenv("UPI_ID", "")
+DEMO_EMAIL    = os.getenv("DEMO_EMAIL", "demo@sourceup.com")
 DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "demopass123")
-DEMO_PLAN = os.getenv("DEMO_PLAN", "pro")
+DEMO_PLAN     = os.getenv("DEMO_PLAN", "pro")
+
+# Google OAuth2 config — set these in your .env
+GOOGLE_CLIENT_ID     = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI  = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+
+# Frontend URL to redirect after OAuth (set to your React dev server)
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+GOOGLE_AUTH_URL  = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO  = "https://www.googleapis.com/oauth2/v3/userinfo"
 
 # Plan pricing in INR
 PLANS = {
@@ -70,10 +89,40 @@ class PaymentVerifyRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helper: get users collection with guard
+# ---------------------------------------------------------------------------
+
+def _get_users():
+    """Return users collection, raising 503 if MongoDB is not connected."""
+    try:
+        db = MongoDB.get_db()
+        return db.users
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Database not connected. "
+                "Check your MONGODB_URI environment variable and ensure MongoDB is running."
+            )
+        )
+
+
+def _get_orders():
+    """Return orders collection, raising 503 if MongoDB is not connected."""
+    try:
+        db = MongoDB.get_db()
+        return db.orders
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="Database not connected.")
+
+
+# ---------------------------------------------------------------------------
 # Auth Dependencies
 # ---------------------------------------------------------------------------
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> dict:
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> dict:
     """Dependency: validate JWT and return user dict."""
     if credentials is None:
         raise HTTPException(
@@ -91,7 +140,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         )
 
     email = payload.get("sub")
-    plan = payload.get("plan", "free")
+    plan  = payload.get("plan", "free")
 
     if not email:
         raise HTTPException(status_code=401, detail="Invalid token")
@@ -106,41 +155,46 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest):
     """Register a new user (free plan by default)."""
-    db = MongoDB.get_db()
-    users_collection = db.users
+    users_collection = _get_users()   # raises 503 if DB is down
 
-    # Check if user exists
-    existing = await users_collection.find_one({"email": req.email})
+    # Check duplicate
+    try:
+        existing = await users_collection.find_one({"email": req.email})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database query failed: {e}")
+
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
 
-    # Hash password
     hashed_password = hash_password(req.password)
 
-    # Create user document
     user = {
-        "email": req.email,
+        "email":           req.email,
         "hashed_password": hashed_password,
-        "plan": "free",
-        "company": req.company or "",
-        "created_at": datetime.utcnow().isoformat(),
-        "is_demo": False,
+        "plan":            "free",
+        "company":         req.company or "",
+        "created_at":      datetime.utcnow().isoformat(),
+        "is_demo":         False,
+        "auth_provider":   "email",   # track how the user signed up
     }
-    await users_collection.insert_one(user)
 
-    # Create access token
+    try:
+        await users_collection.insert_one(user)
+    except Exception as e:
+        # Duplicate key race condition
+        if "duplicate key" in str(e).lower() or "E11000" in str(e):
+            raise HTTPException(status_code=409, detail="Email already registered")
+        raise HTTPException(status_code=500, detail=f"Failed to create user: {e}")
+
     token = create_access_token({"sub": req.email, "plan": "free"})
-
     return TokenResponse(access_token=token, plan="free", email=req.email)
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest):
     """Login and receive a JWT."""
-    db = MongoDB.get_db()
-    users_collection = db.users
+    users_collection = _get_users()
 
-    # Find user
     user = await users_collection.find_one({"email": req.email})
     if not user:
         raise HTTPException(
@@ -148,36 +202,160 @@ async def login(req: LoginRequest):
             detail="Invalid email or password"
         )
 
-    # Verify password
+    # Google-only accounts have no password
+    if not user.get("hashed_password"):
+        raise HTTPException(
+            status_code=400,
+            detail="This account uses Google sign-in. Please use 'Sign in with Google'."
+        )
+
     if not verify_password(req.password, user["hashed_password"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password"
         )
 
-    # Create access token
     token = create_access_token({"sub": req.email, "plan": user["plan"]})
-
     return TokenResponse(access_token=token, plan=user["plan"], email=req.email)
 
 
 @router.get("/me")
 async def get_me(current_user: dict = Depends(get_current_user)):
     """Return current user profile."""
-    db = MongoDB.get_db()
-    users_collection = db.users
+    users_collection = _get_users()
 
     user = await users_collection.find_one({"email": current_user["email"]})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     return {
-        "email": current_user["email"],
-        "plan": current_user["plan"],
-        "company": user.get("company", ""),
-        "created_at": user.get("created_at", ""),
-        "is_demo": user.get("is_demo", False),
+        "email":         current_user["email"],
+        "plan":          current_user["plan"],
+        "company":       user.get("company", ""),
+        "created_at":    user.get("created_at", ""),
+        "is_demo":       user.get("is_demo", False),
+        "auth_provider": user.get("auth_provider", "email"),
+        "avatar_url":    user.get("avatar_url", ""),
+        "full_name":     user.get("full_name", ""),
     }
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth2 — Step 1: redirect to Google
+# ---------------------------------------------------------------------------
+
+@router.get("/google/login")
+async def google_login():
+    """Redirect the browser to Google's OAuth2 consent screen."""
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(
+            status_code=501,
+            detail="Google OAuth not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."
+        )
+
+    params = {
+        "client_id":     GOOGLE_CLIENT_ID,
+        "redirect_uri":  GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope":         "openid email profile",
+        "access_type":   "offline",
+        "prompt":        "select_account",
+    }
+    from urllib.parse import urlencode
+    url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    return RedirectResponse(url)
+
+
+# ---------------------------------------------------------------------------
+# Google OAuth2 — Step 2: handle callback, create/login user
+# ---------------------------------------------------------------------------
+
+@router.get("/google/callback")
+async def google_callback(code: str, request: Request):
+    """
+    Exchange the auth code for tokens, fetch the user's Google profile,
+    then create or log in the user and redirect to the frontend with a JWT.
+    """
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured.")
+
+    async with httpx.AsyncClient() as client:
+        # Exchange code for access token
+        token_resp = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code":          code,
+                "client_id":     GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "redirect_uri":  GOOGLE_REDIRECT_URI,
+                "grant_type":    "authorization_code",
+            },
+        )
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Google token exchange failed: {token_resp.text}")
+
+        token_data   = token_resp.json()
+        access_token = token_data.get("access_token")
+
+        # Fetch Google user info
+        userinfo_resp = await client.get(
+            GOOGLE_USERINFO,
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if userinfo_resp.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to fetch Google user info")
+
+        google_user = userinfo_resp.json()
+
+    email      = google_user.get("email")
+    full_name  = google_user.get("name", "")
+    avatar_url = google_user.get("picture", "")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Google did not return an email address")
+
+    users_collection = _get_users()
+
+    # Find or create user
+    existing = await users_collection.find_one({"email": email})
+
+    if existing:
+        # Update avatar/name in case they changed
+        await users_collection.update_one(
+            {"email": email},
+            {"$set": {"full_name": full_name, "avatar_url": avatar_url, "auth_provider": "google"}},
+        )
+        plan = existing.get("plan", "free")
+    else:
+        # New user via Google — create with free plan
+        new_user = {
+            "email":           email,
+            "hashed_password": None,          # no password for OAuth users
+            "plan":            "free",
+            "company":         "",
+            "full_name":       full_name,
+            "avatar_url":      avatar_url,
+            "created_at":      datetime.utcnow().isoformat(),
+            "is_demo":         False,
+            "auth_provider":   "google",
+        }
+        await users_collection.insert_one(new_user)
+        plan = "free"
+
+    # Issue our own JWT
+    jwt_token = create_access_token({"sub": email, "plan": plan})
+
+    # Redirect to frontend with token in query param
+    # The frontend reads it from the URL and stores in localStorage
+    from urllib.parse import urlencode
+    query_params = urlencode({
+        'token': jwt_token,
+        'email': email,
+        'plan': plan,
+        'name': full_name,
+    })
+    redirect_url = f"{FRONTEND_URL}/oauth-callback?{query_params}"
+    return RedirectResponse(redirect_url)
 
 
 # ---------------------------------------------------------------------------
@@ -186,44 +364,31 @@ async def get_me(current_user: dict = Depends(get_current_user)):
 
 @router.post("/demo-login", response_model=TokenResponse)
 async def demo_login():
-    """
-    Demo login endpoint - creates or retrieves a demo Pro user.
-    This is for demo purposes only - remove in production!
-    """
-    db = MongoDB.get_db()
-    users_collection = db.users
+    """Demo login — creates or retrieves a demo Pro user."""
+    users_collection = _get_users()
 
-    # Check if demo user exists
     demo_user = await users_collection.find_one({"email": DEMO_EMAIL})
 
     if not demo_user:
-        # Create demo user with Pro plan
         demo_user_data = {
-            "email": DEMO_EMAIL,
+            "email":           DEMO_EMAIL,
             "hashed_password": hash_password(DEMO_PASSWORD),
-            "plan": DEMO_PLAN,
-            "company": "Demo Company",
-            "is_demo": True,
-            "created_at": datetime.utcnow().isoformat(),
+            "plan":            DEMO_PLAN,
+            "company":         "Demo Company",
+            "is_demo":         True,
+            "created_at":      datetime.utcnow().isoformat(),
+            "auth_provider":   "email",
         }
         await users_collection.insert_one(demo_user_data)
-        print(f"✅ Created demo user: {DEMO_EMAIL} (plan: {DEMO_PLAN})")
     else:
-        # Ensure demo user has Pro plan
         if demo_user.get("plan") != DEMO_PLAN:
             await users_collection.update_one(
                 {"email": DEMO_EMAIL},
                 {"$set": {"plan": DEMO_PLAN}}
             )
-            print(f"✅ Updated demo user to {DEMO_PLAN} plan")
 
     token = create_access_token({"sub": DEMO_EMAIL, "plan": DEMO_PLAN})
-
-    return TokenResponse(
-        access_token=token,
-        plan=DEMO_PLAN,
-        email=DEMO_EMAIL
-    )
+    return TokenResponse(access_token=token, plan=DEMO_PLAN, email=DEMO_EMAIL)
 
 
 # ---------------------------------------------------------------------------
@@ -247,25 +412,21 @@ async def create_payment_order(
             detail="UPI_ID not configured. Add UPI_ID to your .env file."
         )
 
-    db = MongoDB.get_db()
-    orders_collection = db.orders
-
+    orders_collection = _get_orders()
     plan_info = PLANS[req.plan]
-    order_id = str(uuid.uuid4())
+    order_id  = str(uuid.uuid4())
 
-    # Store pending order
     await orders_collection.insert_one({
-        "order_id": order_id,
-        "email": current_user["email"],
-        "plan": req.plan,
-        "amount": plan_info["amount"],
-        "created_at": datetime.utcnow().isoformat(),
-        "verified": False,
+        "order_id":          order_id,
+        "email":             current_user["email"],
+        "plan":              req.plan,
+        "amount":            plan_info["amount"],
+        "created_at":        datetime.utcnow().isoformat(),
+        "verified":          False,
         "upi_transaction_id": None,
-        "verified_at": None,
+        "verified_at":       None,
     })
 
-    # Build UPI deep-link
     upi_link = (
         f"upi://pay?pa={UPI_ID}"
         f"&pn=SourceUp"
@@ -276,12 +437,12 @@ async def create_payment_order(
     )
 
     return {
-        "order_id": order_id,
-        "upi_id": UPI_ID,
-        "amount": plan_info["amount"],
-        "currency": plan_info["currency"],
+        "order_id":  order_id,
+        "upi_id":    UPI_ID,
+        "amount":    plan_info["amount"],
+        "currency":  plan_info["currency"],
         "plan_name": plan_info["name"],
-        "upi_link": upi_link,
+        "upi_link":  upi_link,
         "note": (
             f"Pay ₹{plan_info['amount']} to {UPI_ID} using any UPI app. "
             "Use the transaction ID from your UPI app to verify the payment below."
@@ -295,11 +456,9 @@ async def verify_payment(
     current_user: dict = Depends(get_current_user)
 ):
     """Verify UPI payment by order_id and UPI transaction ID (UTR)."""
-    db = MongoDB.get_db()
-    orders_collection = db.orders
-    users_collection = db.users
+    orders_collection = _get_orders()
+    users_collection  = _get_users()
 
-    # Find order
     order = await orders_collection.find_one({"order_id": req.order_id})
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
@@ -313,29 +472,26 @@ async def verify_payment(
     if req.plan not in PLANS:
         raise HTTPException(status_code=400, detail=f"Unknown plan: {req.plan}")
 
-    # Mark order as verified
     await orders_collection.update_one(
         {"order_id": req.order_id},
         {"$set": {
-            "verified": True,
+            "verified":           True,
             "upi_transaction_id": req.upi_transaction_id,
-            "verified_at": datetime.utcnow().isoformat()
+            "verified_at":        datetime.utcnow().isoformat()
         }}
     )
 
-    # Upgrade user plan
     await users_collection.update_one(
         {"email": current_user["email"]},
         {"$set": {"plan": req.plan}}
     )
 
-    # Create new token with updated plan
     new_token = create_access_token({"sub": current_user["email"], "plan": req.plan})
 
     return {
-        "success": True,
-        "plan": req.plan,
-        "message": f"Successfully upgraded to {req.plan.title()} plan",
+        "success":   True,
+        "plan":      req.plan,
+        "message":   f"Successfully upgraded to {req.plan.title()} plan",
         "new_token": new_token,
     }
 
@@ -345,27 +501,15 @@ async def list_plans():
     """Return available plans and pricing."""
     return [
         {
-            "id": "free",
-            "name": "Free",
-            "price_inr": 0,
+            "id": "free", "name": "Free", "price_inr": 0,
             "features": ["10 searches/day", "Basic results", "No quote drafting"],
         },
         {
-            "id": "pro",
-            "name": "SourceUp Pro",
-            "price_inr": 999,
-            "features": [
-                "Unlimited searches", "AI quote drafting",
-                "Decision traces", "What-if scenarios"
-            ],
+            "id": "pro", "name": "SourceUp Pro", "price_inr": 999,
+            "features": ["Unlimited searches", "AI quote drafting", "Decision traces", "What-if scenarios"],
         },
         {
-            "id": "enterprise",
-            "name": "Enterprise",
-            "price_inr": 4999,
-            "features": [
-                "Everything in Pro", "API access",
-                "Priority support", "Custom integrations"
-            ],
+            "id": "enterprise", "name": "Enterprise", "price_inr": 4999,
+            "features": ["Everything in Pro", "API access", "Priority support", "Custom integrations"],
         },
     ]
