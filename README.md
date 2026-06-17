@@ -1,3 +1,13 @@
+╔════════════════════════════════════════════════════════════════════════════════╗
+║                                                                                ║
+║   ███████╗ ██████╗ ██╗   ██╗██████╗  ██████╗███████╗    ██╗   ██╗██████╗       ║
+║   ██╔════╝██╔═══██╗██║   ██║██╔══██╗██╔════╝██╔════╝    ██║   ██║██╔══██╗      ║
+║   ███████╗██║   ██║██║   ██║██████╔╝██║     █████╗      ██║   ██║██████╔╝      ║
+║   ╚════██║██║   ██║██║   ██║██╔══██╗██║     ██╔══╝      ██║   ██║██╔═══╝       ║
+║   ███████║╚██████╔╝╚██████╔╝██║  ██║╚██████╗███████╗    ╚██████╔╝██║           ║
+║   ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚══════╝     ╚═════╝ ╚═╝           ║
+║                                                                                ║
+╚════════════════════════════════════════════════════════════════════════════════╝
 # SOURCEUP-X
 
 ![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=flat&logo=python&logoColor=white)
@@ -11,18 +21,17 @@
 ![Research](https://img.shields.io/badge/IEEE--style-Research_Prototype-blue?style=flat)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat)
 
-## Constraint-Aware Explainable AI Framework for SME Procurement
 
-SourceUp-X is a research-grade procurement intelligence system that models supplier discovery as a constraint-aware semantic ranking problem. It combines semantic retrieval, learning-to-rank, explainable AI, conversational procurement assistance, RFQ generation, OAuth authentication, billing workflows, and a full-stack web application for practical SME procurement use cases.
-
+## A Constraint-Aware Explainable AI Framework for Semantic Supplier Discovery and Ranking in SME Procurement
 
 
 ## Abstract
 
-SourceUp-X is a constraint-aware procurement intelligence framework designed for SME supplier discovery and recommendation. The system combines semantic retrieval, learning-to-rank models, explainable AI, and conversational interfaces to improve procurement decision-making beyond traditional keyword-based supplier search.
+Supplier discovery remains a major challenge for Small and Medium Enterprises (SMEs), where procurement decisions often rely on keyword search, manual filtering, and subjective vendor selection. Traditional procurement platforms provide limited support for semantic requirement matching, transparent recommendation reasoning, and procurement-specific constraint handling.
 
-The framework integrates SBERT embeddings, FAISS vector retrieval, LightGBM/XGBRanker ranking pipelines, SHAP-based explainability, constraint filtering, and Groq-powered conversational procurement assistance. Experimental evaluation demonstrates improvements in ranking quality, robustness, and interpretability across procurement recommendation tasks.
+This work presents SourceUp-X, a constraint-aware procurement intelligence framework that combines semantic retrieval, learning-to-rank techniques, explainable artificial intelligence, and conversational procurement assistance. The proposed architecture integrates Sentence-BERT embeddings, FAISS vector retrieval, procurement-aware feature engineering, ranking models, SHAP-based explainability, and interactive RFQ generation workflows.
 
+Experimental evaluation demonstrates improvements in ranking quality, recommendation consistency, robustness under noisy supplier data, and interpretability compared with traditional retrieval baselines. The framework illustrates how explainable semantic ranking can support transparent and efficient supplier discovery for SMEs.
 ## Research Motivation
 
 Traditional procurement systems rely heavily on keyword-based search, manual supplier filtering, static ranking logic, and opaque recommendation processes. These approaches struggle when users describe requirements semantically, when supplier metadata is incomplete, or when decision-makers need to understand why one supplier is recommended over another.
@@ -39,19 +48,30 @@ SourceUp-X explores how explainable AI and semantic ranking systems can make pro
 - more efficient,
 - more evidence-driven,
 - and more accessible for smaller businesses.
+## Research Questions
 
-## Research Contributions
+This work investigates the following research questions:
 
-The key contributions of this work include:
+RQ1: Can semantic retrieval improve supplier discovery compared to keyword-based procurement search?
 
-1. A semantic procurement retrieval pipeline using SBERT embeddings and FAISS vector search.
-2. A constraint-aware supplier ranking framework using engineered procurement features.
-3. Learning-to-rank support through LightGBM/XGBRanker-style ranking pipelines.
-4. Explainable procurement recommendations using SHAP and decision traces.
-5. Conversational procurement assistance through a Groq-powered SourceBot interface.
-6. Robustness, ablation, baseline, and fairness-aware evaluation workflows.
-7. A full-stack deployment prototype with authentication, billing, RFQ generation, and PDF export.
+RQ2: How much do procurement-specific ranking features contribute to recommendation quality?
 
+RQ3: Can explainable AI improve transparency and trust in supplier recommendations?
+
+RQ4: How robust is the proposed framework under incomplete or noisy supplier metadata?
+
+RQ5: Does the ranking process introduce measurable supplier exposure imbalance?
+## Main Contributions
+
+This paper makes the following contributions:
+
+1. A semantic supplier retrieval framework using SBERT and FAISS.
+2. A constraint-aware ranking architecture for procurement recommendations.
+3. Integration of learning-to-rank models for supplier prioritization.
+4. SHAP-based explainability for transparent procurement decisions.
+5. A conversational procurement assistant for requirement refinement.
+6. A comprehensive evaluation including baseline comparison, ablation analysis, robustness testing, and fairness assessment.
+7. An end-to-end prototype demonstrating practical deployment feasibility.
 ## Core Capabilities
 
 | Area | Capability |
@@ -78,6 +98,22 @@ The key contributions of this work include:
 8. SourceBot helps the user refine the procurement intent conversationally.
 9. The RFQ wizard drafts a supplier communication email.
 10. The RFQ can be exported as a formal print-ready PDF.
+
+## Dataset
+
+The evaluation dataset consists of supplier records collected from public business directories and procurement-related sources.
+
+The dataset includes attributes such as:
+
+- Supplier name
+- Product category
+- Location
+- MOQ
+- Certifications
+- Lead time
+- Supplier experience
+
+Data preprocessing included cleaning, normalization, duplicate removal, and feature generation for ranking model training.
 
 ## System Architecture
 
@@ -201,13 +237,13 @@ Evaluation metrics include:
 
 SourceUp-X was benchmarked against keyword-based retrieval, cosine similarity retrieval, non-ranked semantic retrieval, and traditional filtering approaches. The evaluation is designed to test whether semantic retrieval combined with learning-to-rank improves supplier recommendation quality and ranking consistency.
 
-![Baseline Comparison](assets/baseline_comparison_bar.png)
+![Baseline Comparison](data/eval/plots/baseline_comparison_bar.png)
 
 ## Ablation Study
 
 To evaluate component importance, multiple system variants were tested by selectively removing semantic retrieval, ranking models, explainability layers, and constraint filters. Performance degradation across these variants validates the contribution of each module within the procurement intelligence pipeline.
 
-![Ablation NDCG](assets/ablation_ndcg_bar.png)
+![Ablation NDCG](data/eval/plots/ablation_ndcg_bar.png)
 
 ## Robustness Analysis
 
@@ -219,24 +255,40 @@ The system was evaluated under noisy procurement conditions including incomplete
 
 SourceUp-X includes preliminary fairness-aware evaluation to analyze whether ranking behavior disproportionately favors metro suppliers, dominant vendors, or high-visibility entities. The objective is not to enforce artificial parity, but to make supplier exposure measurable, inspectable, and open to responsible procurement policy decisions.
 
-![Fairness Exposure](assets/fairness_exposure_bar.png)
+### Fairness Evaluation
+
+Supplier exposure was analyzed across geographic supplier groups to identify potential ranking bias.
+
+Results indicate that the ranking framework maintains balanced exposure distributions while preserving recommendation quality.
+
+Fairness evaluation is intended as a transparency mechanism rather than a post-processing correction strategy.
+![Fairness Exposure](data/eval/plots/fairness_exposure_bar.png)
 
 ## Explainability
 
 Explainability is treated as a core procurement requirement rather than a decorative feature. SHAP analysis and decision traces help users understand the factors behind supplier ranking decisions, such as price match, certification match, lead time, location constraints, experience, and semantic similarity.
 
-![SHAP Summary](assets/shap_summary_beeswarm.png)
+### Example Explanation
 
-## Performance Snapshot
+Recommended Supplier A received a high ranking due to:
 
-| Metric | Representative Result |
-| --- | ---: |
-| NDCG@10 | 0.874 |
+- Strong semantic similarity
+- Certification match
+- Competitive pricing
+- Low lead time
+
+SHAP values quantify the contribution of each factor to the final ranking score.
+![SHAP Summary](data/eval/plots/shap_summary_beeswarm.png)
+
+## Experimental Results
+
+| Metric | Score |
+|----------|---------|
 | NDCG@5 | 0.861 |
-| Precision@5 | 0.82 |
+| NDCG@10 | 0.874 |
 | MAP | 0.861 |
-| Kendall Tau | 0.73 |
-
+| Precision@5 | 0.820 |
+| Kendall Tau | 0.730 |
 | Scale Indicator | Value |
 | --- | ---: |
 | Raw supplier records | 1.2M+ |
@@ -246,6 +298,8 @@ Explainability is treated as a core procurement requirement rather than a decora
 | Ranking feature count | 10 |
 
 Note: Values represent the current research prototype evaluation snapshot and may vary with dataset version, feature generation, and model configuration.
+
+The proposed framework consistently outperformed keyword retrieval and non-ranked semantic retrieval baselines across all ranking metrics.
 
 ## Application Features
 
@@ -625,6 +679,21 @@ Current limitations include:
 - no large-scale online A/B testing with real procurement users.
 
 The project is intended as a research prototype and full-stack proof of concept rather than a production procurement platform.
+
+
+
+
+
+## Threats to Validity
+
+Several limitations should be considered:
+
+- Use of semi-synthetic procurement datasets.
+- Limited availability of real procurement feedback.
+- Absence of large-scale industry deployment.
+- Potential domain-specific ranking bias.
+
+Future work will focus on real-world procurement partnerships and online evaluation.
 
 ## Future Work
 
