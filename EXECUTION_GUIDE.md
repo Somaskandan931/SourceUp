@@ -52,6 +52,32 @@ SOURCEUP_DIR=D:\PycharmProjects\SourceUp
 
 ---
 
+## Step 0 — Clean Stale Artifacts (one-time, after the leakage fix)
+
+`feature_builder.py`'s label formula and `eval/ablation.py` were patched to fix the
+NDCG@10 = 1.0 leakage issue and to add a proper Standard-vs-CD-LambdaRank ablation
+variant. Old artifacts generated before this fix are stale and must be removed so
+they aren't accidentally reused:
+
+```bash
+# stale bytecode (may shadow the patched .py files)
+find . -name "__pycache__" -type d -exec rm -rf {} +
+
+# stale models trained on the old (leaky) labels
+rm -f backend/app/models/embeddings/ranker_lightgbm.pkl
+rm -f backend/app/models/embeddings/ranker_lightgbm_full.pkl
+rm -f backend/app/models/embeddings/xgb_ranker.pkl
+
+# stale eval results/plots from the old labels
+rm -f data/eval/*.csv
+rm -rf data/eval/plots/*
+```
+
+> `xgb_ranker.pkl` / `ranker_lightgbm_full.pkl` are not read by any eval script or
+> by `ranker.py` — only `ranker_lightgbm.pkl` (via `cfg.LGBM_MODEL`) is. Safe to delete.
+
+---
+
 ## Step 1 — Java Scraper (data collection)
 
 Build the JAR, then run a scrape. Output CSVs go to `data/outputs/`.
@@ -77,6 +103,10 @@ cp data/outputs/result.csv data/test_output.csv
 
 ## Step 2 — Data Pipeline (merge → clean → FAISS index)
 
+> **Must be rerun** after Step 0's cleanup — `feature_builder` now generates
+> non-deterministic, noise-injected relevance labels (fixes the NDCG=1.0 leakage).
+> Skipping this step means training/eval will reuse the old, leaky `ranking_data.csv`.
+
 ```bash
 python pipeline/run_all.py
 ```
@@ -100,19 +130,27 @@ python pipeline/run_all.py --skip-features
 Both commands must complete before the backend will use ML ranking.
 
 ```bash
-# Primary: LightGBM LambdaRank
+# Primary: trains BOTH Standard LambdaRank and CD-LambdaRank, prints a
+# head-to-head comparison, and saves all three model files below
 python backend/app/models/train_lambdarank.py
 
 # Optional: tune constraint-penalty weight (default γ = 0.3)
 python backend/app/models/train_lambdarank.py --gamma 0.3
 
-# Legacy: XGBoost backup
+# Legacy: XGBoost backup (optional — not loaded by any eval script or by
+# the live backend; only needed if you want an extra baseline row)
 python backend/app/models/train_ranker.py
 ```
 
-Outputs: `ranker_lightgbm.pkl` and `ranker_xgboost.pkl` in `backend/app/models/embeddings/`.
+Outputs in `backend/app/models/embeddings/`:
+- `ranker_lightgbm_standard.pkl` — Standard LambdaRank (built-in objective)
+- `ranker_lightgbm_cd.pkl` — CD-LambdaRank (custom feasibility objective)
+- `ranker_lightgbm.pkl` — copy of the CD model; this is the **only** file
+  `ranker.py` and every `eval/*.py` script actually load (via `cfg.LGBM_MODEL`)
+- `cd_vs_standard_comparison.csv` (in `data/eval/`) — Table II numbers for the paper
 
-> **Skip this step** if the scraped data has not changed — pre-trained models are already included.
+> **Skip this step** only if Step 0/2 were not run — otherwise always retrain;
+> pre-trained models from before the leakage fix are no longer valid.
 
 ---
 
@@ -122,7 +160,7 @@ Run these before starting the backend if you need research metrics.
 All results and plots are saved to `data/eval/`.
 
 ```bash
-python eval/ablation.py            # 5-variant ablation study
+python eval/ablation.py            # 6-variant ablation study (now includes V1b: Standard LambdaRank)
 python eval/baselines.py           # BM25 / SBERT / rule-based comparison
 python eval/sensitivity.py         # γ sweep — NDCG vs. CVR trade-off
 python eval/shap_analysis.py       # SHAP feature attribution (IEEE-grade XAI)
@@ -205,6 +243,8 @@ Opens `http://localhost:3000`.
 | Problem | Fix |
 |---------|-----|
 | `RuntimeError: suppliers.faiss not found` | Run Step 2 (`pipeline/run_all.py`) first |
+| Ablation V1b skipped / "Standard LambdaRank model not found" | Run Step 3 (`train_lambdarank.py`) — it now also saves `ranker_lightgbm_standard.pkl` |
+| Ablation prints "🚨 LEAKAGE WARNING" | A variant scored NDCG@10/P@5 > 0.97 on held-out test — investigate before reporting; don't suppress |
 | `/chat` returns 500 | Check `GROQ_API_KEY` in `.env` |
 | Auth endpoints return 500 | Install `python-jose[cryptography] passlib[bcrypt]`; set `SECRET_KEY` in `.env` |
 | Billing order returns 503 | Set `UPI_ID` in `.env` |

@@ -519,6 +519,14 @@ def run_counterfactual_fairness(model, df_test: pd.DataFrame,
                     "n_pairs": 0, "fair": True, "deltas": np.array([0.0])}
 
     sample_size = min(n_pairs, len(metro_neutral), len(tier2_neutral))
+
+    if sample_size == 0:
+        print(f"  Neutral-location Metro suppliers:  {len(metro_neutral)}")
+        print(f"  Neutral-location Tier-2 suppliers: {len(tier2_neutral)}")
+        print("  ⚠️  No Tier-2 neutral suppliers available — counterfactual test skipped")
+        return {"mean_delta": 0.0, "std_delta": 0.0, "max_delta": 0.0,
+                "n_pairs": 0, "fair": True, "deltas": np.array([0.0])}
+
     metro_sample = metro_neutral.sample(sample_size, random_state=42)
     tier2_sample = tier2_neutral.sample(sample_size, random_state=42)
 

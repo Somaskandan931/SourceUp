@@ -152,36 +152,34 @@ def compute_shap_values(model, df_test: pd.DataFrame):
     This is mathematically equivalent to TreeSHAP.
     """
 
-    print("\n🔬 Computing SHAP values using XGBoost native TreeSHAP...")
+    print("\n🔬 Computing SHAP values using LightGBM native TreeSHAP...")
 
-    import xgboost as xgb
-
-    # Keep dataframe
-    X = df_test[FEATURE_COLS].astype(np.float32)
+    # Keep dataframe — LightGBM predict accepts numpy directly, no DMatrix needed
+    X = df_test[FEATURE_COLS].astype(np.float64)
 
     try:
         # ---------------------------------------------------------
-        # GET RAW BOOSTER
+        # GET RAW BOOSTER — handle both raw Booster and LGBMRanker
         # ---------------------------------------------------------
-        booster = model.get_booster()
+        if hasattr(model, "booster_"):
+            # sklearn LGBMRanker wrapper
+            booster = model.booster_
+        else:
+            # Already a raw lightgbm.Booster
+            booster = model
 
-        print("   Creating DMatrix...")
+        print("   Computing SHAP contributions via pred_contrib=True...")
 
-        dmatrix = xgb.DMatrix(X)
-
-        print("   Computing SHAP contributions via pred_contribs=True...")
-
-        # Native TreeSHAP from XGBoost
+        # LightGBM native TreeSHAP — returns (n_samples, n_features + 1)
+        # last column is the expected value (bias) repeated per row
         shap_contribs = booster.predict(
-            dmatrix,
-            pred_contribs=True
+            X.values,
+            pred_contrib=True
         )
 
-        # Last column = bias term
+        # Last column = expected value (bias term)
         shap_values_array = shap_contribs[:, :-1]
-
-        # Expected value (base score)
-        expected_value = shap_contribs[0, -1]
+        expected_value = float(shap_contribs[0, -1])
 
         # ---------------------------------------------------------
         # Lightweight explainer mock

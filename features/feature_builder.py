@@ -138,42 +138,55 @@ def _stratified_hard_negatives(
     return parts.to_dict("records")
 
 
-def compute_relevance(sbert_score: float, price_match: float, location_match: float,
-                       cert_match: float, years_norm: float) -> int:
+def _location_sampling_weights(df_suppliers: pd.DataFrame, loc_col: str) -> np.ndarray:
     """
-    Generate WEAKLY SUPERVISED relevance labels with noise + hidden signal.
+    Weight target_loc draws by real supplier density per city instead of
+    uniform 1/30. Uniform sampling picks an essentially-unmatchable city
+    ~97% of the time (since suppliers cluster in a handful of metros),
+    which crashes joint feasibility (price∧location∧cert) to <1% and
+    starves CD-LambdaRank of feasible-vs-infeasible pairs to learn from.
 
-    Uses price_match, cert_match, years_norm lightly in the label — but adds
-    a hidden_factor (random Gaussian) that the model cannot observe.  This
-    breaks the deterministic label=f(features) relationship that causes
-    NDCG=1.0, while still producing meaningful graded labels.
-
-    Label distribution is rebalanced so each grade (0-3) appears roughly
-    25 % of the time, preventing the model from exploiting class skew.
+    "" (no location constraint) gets a fixed floor probability — most real
+    procurement queries don't pin an exact city.
     """
-    hidden_factor = np.random.normal(0, 0.3)
+    locs = df_suppliers[loc_col].fillna("").str.lower()
+    NO_CONSTRAINT_PROB = 0.35
+    cities = CONSTRAINT_LOCATIONS[1:]  # exclude ""
+    counts = np.array([locs.str.contains(c, regex=False).sum() for c in cities], dtype=float)
+    counts = np.where(counts.sum() > 0, counts, 1.0)  # avoid all-zero edge case
+    city_weights = (1 - NO_CONSTRAINT_PROB) * counts / counts.sum()
+    return np.concatenate([[NO_CONSTRAINT_PROB], city_weights])
 
-    label_score = (
-        0.35 * sbert_score +
+
+def compute_relevance(
+    sbert_score,
+    price_match,
+    location_match,
+    cert_match,
+    years_norm,
+):
+
+    hidden_factor = np.random.normal(0, 0.30)
+
+    score = (
+        0.25 * sbert_score +
         0.20 * price_match +
-        0.15 * location_match +
-        0.15 * cert_match +
+        0.20 * location_match +
+        0.20 * cert_match +
         0.10 * years_norm +
         0.05 * hidden_factor
     )
 
-    # 15 % random noise — randomises label rather than simply inverting it
     if np.random.rand() < 0.15:
-        label_score = np.random.rand()
+        score += np.random.normal(0, 0.15)
 
-    label_score = float(np.clip(label_score, 0.0, 1.0))
+    score = float(np.clip(score, 0, 1))
 
-    # Rebalanced thresholds: each bucket covers ~25 % of [0, 1]
-    if label_score > 0.75:
+    if score >= 0.75:
         return 3
-    elif label_score > 0.50:
+    elif score >= 0.55:
         return 2
-    elif label_score > 0.25:
+    elif score >= 0.35:
         return 1
     else:
         return 0
@@ -212,6 +225,9 @@ def build_training_data(
     df_suppliers = load_suppliers()
     queries = load_queries()
 
+    loc_col = "location" if "location" in df_suppliers.columns else "supplier_location"
+    location_weights = _location_sampling_weights(df_suppliers, loc_col)
+
     all_rows = []
     query_id = 0
 
@@ -224,6 +240,12 @@ def build_training_data(
         noisy_query = base_query + " " + rng_noise.choice(noise_words)
 
         candidates = retrieve(noisy_query, k=top_k)
+        # Inject retrieval noise
+        rng = np.random.default_rng()
+
+        for c in candidates :
+            if "faiss_score" in c :
+                c["faiss_score"] += rng.normal( 0, 0.10 )
 
         # Stratified hard negatives — guaranteed Indian city representation
         hard_negatives = _stratified_hard_negatives(
@@ -246,10 +268,64 @@ def build_training_data(
             query_id += 1
             rng = np.random.default_rng(seed=hash(f"{base_query}_{variation}") % 2**31)
 
-            max_price = rng.choice([None, 20, 50, 100, 200, 500])
-            # Expanded constraint pool: metro + all Tier-2 cities + empty (no constraint)
-            target_loc = rng.choice(CONSTRAINT_LOCATIONS)
-            req_cert = rng.choice(["", "ISO", "FDA", "CE", "GMP"])
+            constraint_type = rng.choice(
+                [
+                    "price_only",
+                    "location_only",
+                    "cert_only",
+                    "price_location",
+                    "price_cert",
+                    "location_cert",
+                    "all_constraints",
+                    "none"
+                ],
+                p=[
+                    0.20,  # price only
+                    0.15,  # location only
+                    0.10,  # cert only
+                    0.15,  # price + location
+                    0.10,  # price + cert
+                    0.10,  # location + cert
+                    0.05,  # all constraints
+                    0.15  # unconstrained query
+                ]
+            )
+
+            max_price = None
+            target_loc = ""
+            req_cert = ""
+
+            if constraint_type in (
+                    "price_only",
+                    "price_location",
+                    "price_cert",
+                    "all_constraints"
+            ) :
+                max_price = rng.choice(
+                    [50, 100, 200, 500, 1000],
+                    p=[0.10, 0.20, 0.30, 0.30, 0.10]
+                )
+
+            if constraint_type in (
+                    "location_only",
+                    "price_location",
+                    "location_cert",
+                    "all_constraints"
+            ) :
+                target_loc = rng.choice(
+                    CONSTRAINT_LOCATIONS,
+                    p=location_weights
+                )
+
+            if constraint_type in (
+                    "cert_only",
+                    "price_cert",
+                    "location_cert",
+                    "all_constraints"
+            ) :
+                req_cert = rng.choice(
+                    ["ISO", "FDA", "CE", "GMP"]
+                )
 
             for rank, supplier in enumerate(candidates):
                 # Hard negatives won't have faiss_score — assign low random score
@@ -312,24 +388,38 @@ def build_training_data(
                     or ""
                 )
 
-                all_rows.append({
-                    "query_id":           query_id,
-                    "query_text":         base_query,
-                    "supplier_idx":       rank,
-                    "supplier_name":      supplier.get("supplier_name") or supplier.get("supplier name", ""),
-                    "location":           str(raw_location).strip(),
-                    "price_match":        price_match,
-                    "price_ratio":        price_ratio,
-                    "price_distance":     price_distance,
-                    "location_match":     location_match,
-                    "cert_match":         cert_match,
-                    "years_normalized":   years_norm,
-                    "is_manufacturer":    is_manuf,
-                    "is_trading_company": is_trading,
-                    "faiss_score":        sbert_score,
-                    "faiss_rank":         rank + 1,
-                    "relevance":          relevance,
-                })
+                constraint_score = (
+                                           price_match +
+                                           location_match +
+                                           cert_match
+                                   ) / 3.0
+
+                all_rows.append( {
+                    "query_id" : query_id,
+                    "query_text" : base_query,
+                    "supplier_idx" : rank,
+                    "supplier_name" : supplier.get( "supplier_name" ) or supplier.get( "supplier name", "" ),
+                    "location" : str( raw_location ).strip(),
+
+                    "price_match" : price_match,
+                    "price_ratio" : price_ratio,
+                    "price_distance" : price_distance,
+
+                    "location_match" : location_match,
+                    "cert_match" : cert_match,
+
+                    "constraint_score" : constraint_score,
+
+                    "years_normalized" : years_norm,
+
+                    "is_manufacturer" : is_manuf,
+                    "is_trading_company" : is_trading,
+
+                    "faiss_score" : sbert_score,
+                    "faiss_rank" : rank + 1,
+
+                    "relevance" : relevance,
+                } )
 
         print(f"    📊 Generated {len(candidates) * queries_per_constraint} training pairs")
 
@@ -343,6 +433,17 @@ def build_training_data(
     df_out["tier"] = df_out["location"].apply(_classify_tier)
 
     df_out.to_csv(OUTPUT_FILE, index=False)
+    joint_feasible = (
+            (df_out["price_match"] >= 0.5) &
+            (df_out["location_match"] >= 0.5) &
+            (df_out["cert_match"] >= 0.5)
+    )
+
+    print(
+        f"   Joint feasibility: "
+        f"{joint_feasible.sum():,} / {len( df_out ):,} "
+        f"({100 * joint_feasible.mean():.1f}%)"
+    )
 
     print(f"\n✅ Training dataset saved: {OUTPUT_FILE}")
     print(f"   Total pairs:      {len(df_out):,}")

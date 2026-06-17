@@ -262,6 +262,31 @@ def load_lgbm_model():
         return pickle.load(f)
 
 
+def load_standard_lgbm_model():
+    """Load the Standard-LambdaRank booster saved alongside the CD model
+    (by backend/app/models/train_lambdarank.py) so the ablation can isolate
+    CD-LambdaRank's contribution directly, instead of conflating it with
+    'no LTR at all' (V3)."""
+    std_path = LGBM_PATH.replace(".pkl", "_standard.pkl")
+    if not os.path.exists(std_path):
+        return None
+    with open(std_path, "rb") as f:
+        return pickle.load(f)
+
+
+def score_v1b_standard_lambdarank(df_test: pd.DataFrame) -> Optional[np.ndarray]:
+    """V1b: Standard LambdaRank — same features/data as V1, but the
+    built-in LightGBM objective instead of the CD-LambdaRank custom
+    objective. This is the correct ablation for the CD-LambdaRank novelty
+    claim; V3 (rule-based) is NOT a valid stand-in for it."""
+    model = load_standard_lgbm_model()
+    if model is None:
+        print("   ⚠️  Standard LambdaRank model not found — run "
+              "train_lambdarank.py to generate ranker_lightgbm_standard.pkl")
+        return None
+    return model.predict(df_test[FEATURE_COLS])
+
+
 def score_v1_full_model(df_test: pd.DataFrame) -> np.ndarray:
     """
     V1: Full Model — LightGBM LambdaRank on all features.
@@ -556,6 +581,15 @@ def run_ablation():
     print(f"   NDCG@10 = {results[-1]['NDCG@10']:.4f}   CVR = {results[-1]['CVR']:.4f}")
 
     # ------------------------------------------------------------------
+    # V1b: Standard LambdaRank (isolates CD-LambdaRank's actual contribution)
+    # ------------------------------------------------------------------
+    print("▶ V1b: Standard LambdaRank (built-in objective, no CD-feasibility term)")
+    pred_v1b = score_v1b_standard_lambdarank(df_test)
+    if pred_v1b is not None:
+        results.append(evaluate_variant("V1b: Standard LambdaRank", y_test, pred_v1b, df_test, query_test))
+        print(f"   NDCG@10 = {results[-1]['NDCG@10']:.4f}   CVR = {results[-1]['CVR']:.4f}")
+
+    # ------------------------------------------------------------------
     # V2: No Constraints
     # ------------------------------------------------------------------
     print("▶ V2: No Constraints (constraints neutralised)")
@@ -591,6 +625,14 @@ def run_ablation():
     # Compile & save
     # ------------------------------------------------------------------
     results_df = pd.DataFrame(results)
+
+    # Leakage guard: a perfect or near-perfect score on a real held-out
+    # split should never happen given the noise injected into labels.
+    # Flag it loudly instead of letting it silently reach the paper.
+    suspicious = results_df[(results_df["NDCG@10"] > 0.97) | (results_df["P@5"] > 0.97)]
+    if not suspicious.empty:
+        print("\n🚨 LEAKAGE WARNING — suspiciously perfect score(s), do not report as-is:")
+        print(suspicious[["Variant", "NDCG@10", "P@5"]].to_string(index=False))
 
     csv_path = f"{OUT_DIR}/ablation_results.csv"
     results_df.to_csv(csv_path, index=False)
