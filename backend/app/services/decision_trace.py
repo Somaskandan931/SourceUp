@@ -270,22 +270,35 @@ class DecisionTrace :
         )
 
     def _generate_summary ( self, trace: Dict ) -> List[str] :
-        """Generate human-readable summary of decision."""
+        """Generate concise human-readable reasons — no internal score numbers shown."""
         summary = []
 
-        # Top 3 contributions
         contributions = sorted(
             trace['contributions'].items(),
             key=lambda x : x[1]['contribution'],
             reverse=True
-        )[:3]
+        )
 
         for factor, data in contributions :
-            if data['contribution'] > 0.01 :
-                summary.append(
-                    f"✓ {factor.replace( '_', ' ' ).title()}: "
-                    f"+{data['contribution']:.3f} ({data['explanation']})"
-                )
+            explanation = data.get( 'explanation', '' )
+
+            # Skip entries that signal an unconstrained / neutral field — they are
+            # meaningless to the user and produce visual clutter in the UI.
+            if not explanation or 'no ' in explanation.lower() and 'constraint' in explanation.lower():
+                continue
+            if data['contribution'] <= 0.01:
+                continue
+
+            # Build a short label from the explanation rather than the raw formula
+            label = explanation.strip()
+            # Trim to ~60 chars so it fits comfortably on a tag
+            if len(label) > 60:
+                label = label[:57].rstrip() + '…'
+
+            summary.append( label )
+
+            if len(summary) >= 3:
+                break
 
         return summary
 

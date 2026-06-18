@@ -59,15 +59,73 @@ class ChatResponse(BaseModel):
     session_id: str
 
 
+# Instant, grounded answers for common SourceUp platform questions.
+# Used as a fast-path before hitting the LLM, and as the fallback when
+# GROQ_API_KEY isn't configured (so these always work, even offline).
+QUICK_ANSWERS = {
+    ("become", "supplier"): (
+        "**Becoming a SourceUp supplier** takes 5 steps:\n\n"
+        "1. **Register your business** and create a company profile\n"
+        "2. **List your products** with accurate pricing, MOQ, and lead times\n"
+        "3. **Upload certifications** (ISO, FDA, CE, etc.) to build buyer trust\n"
+        "4. **Get verified** so your profile is marked as a trusted supplier\n"
+        "5. **Respond promptly** to buyer inquiries — responsiveness improves your ranking\n\n"
+        "💡 Complete, certified, and responsive profiles rank higher in buyer search results."
+    ),
+    ("verified", "supplier"): (
+        "**Getting verified on SourceUp** confirms your business is legitimate and trustworthy to buyers.\n\n"
+        "It generally involves submitting your business registration details, uploading any relevant "
+        "certifications (ISO, FDA, CE, etc.), and completing your company profile so it can be reviewed. "
+        "Verified suppliers are flagged as trusted and tend to rank higher in buyer searches.\n\n"
+        "💡 The more complete your profile and certifications, the faster verification tends to go."
+    ),
+    ("requirements", "listing"): (
+        "**To list products on SourceUp**, each listing should include:\n\n"
+        "• Product name, category, and a clear description\n"
+        "• Unit price and minimum order quantity (MOQ)\n"
+        "• Lead time and supplier location\n"
+        "• Any relevant certifications (ISO, FDA, CE, etc.)\n\n"
+        "💡 Listings with complete pricing and certification data are ranked and matched more accurately by our AI."
+    ),
+    ("create", "profile"): (
+        "**Creating a supplier profile on SourceUp** starts with registering your business, then filling in "
+        "your company details, product catalog, pricing, and any certifications you hold. A complete profile "
+        "with verified credentials is what gets surfaced to buyers searching for your products.\n\n"
+        "💡 Add certifications early — they're one of the biggest ranking factors for buyer trust."
+    ),
+    ("difference", "buyer", "supplier"): (
+        "**Buyer accounts** search for products and suppliers, apply filters like price/location/certification, "
+        "and receive ranked, explainable recommendations.\n\n"
+        "**Supplier accounts** list products, upload certifications, and get discovered by buyers whose "
+        "searches match their listings.\n\n"
+        "💡 You can typically tell which mode you're in by whether you're searching (buyer) or listing (supplier)."
+    ),
+}
+
+
+def get_quick_answer(query: str) -> Optional[str]:
+    """Return a static answer if the query matches a known SourceUp platform topic."""
+    q = query.lower()
+    for keywords, answer in QUICK_ANSWERS.items():
+        if all(kw in q for kw in keywords):
+            return answer
+    return None
+
+
 async def get_llm_response(query: str, context: dict = None) -> str:
     """
     Get response from Groq LLM for general/information queries.
+    Falls back to a static quick-answer for known SourceUp platform questions
+    if the Groq client isn't configured.
     """
     try:
         client = get_groq_client()
 
         if client is None:
-            print("⚠️ Groq client not available, using fallback response")
+            print("⚠️ Groq client not available, checking quick answers")
+            quick = get_quick_answer(query)
+            if quick:
+                return quick
             return "I apologize, but I'm unable to process information queries at the moment. Please try asking about specific products or suppliers."
 
         system_prompt = """You are a helpful AI assistant for SourceUP, a B2B supplier sourcing platform.
@@ -79,6 +137,13 @@ Your role is to help users with:
 - Product specifications and industry certifications (CE, UL, RoHS, etc.)
 - General supplier and sourcing questions
 - Industry best practices and standards
+
+ABOUT SOURCEUP (use this when asked how the platform works or how to become a supplier):
+- SourceUp connects buyers with verified suppliers using semantic + AI-ranked search.
+- Buyers search for products with constraints (price, location, certifications, MOQ, lead time) and get ranked, explainable recommendations.
+- Suppliers (sellers) get discovered by buyers when their listings match a search.
+- Becoming a SourceUp supplier typically involves: (1) registering your business and creating a company profile, (2) listing your products with accurate pricing, MOQ, and lead times, (3) uploading relevant certifications (ISO, FDA, CE, etc.) to build buyer trust, (4) getting verified so your profile is marked as a trusted supplier, and (5) responding promptly to buyer inquiries to improve your ranking over time.
+- A complete, certified, and responsive profile generally ranks higher in buyer search results.
 
 Guidelines:
 - Be concise and professional (2-3 paragraphs max)

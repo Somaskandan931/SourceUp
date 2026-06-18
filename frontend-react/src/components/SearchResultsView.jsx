@@ -114,11 +114,19 @@ export default function SearchResultsView({ initialQuery, onBack }) {
 
       {/* Metadata */}
       {meta && !loading && (
-        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <span>📊 {meta.total_candidates?.toLocaleString()} suppliers found</span>
-          {meta.after_constraints != null && <span>✓ {meta.after_constraints} matched constraints</span>}
-          {meta.latency_ms && <span>⚡ {meta.latency_ms}ms</span>}
-          {meta.ranking_method && <span>🏆 Ranked by {meta.ranking_method}</span>}
+        <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', borderBottom: `1px solid ${C.border}`, paddingBottom: 10 }}>
+          <span style={{ fontWeight: 600, color: C.text }}>{results.length} result{results.length !== 1 ? 's' : ''} shown</span>
+          {meta.after_constraints != null && meta.total_candidates != null && (
+            <span style={{ color: C.muted }}>
+              {meta.after_constraints.toLocaleString()} fully match your filters · searched {meta.total_candidates.toLocaleString()} candidates
+            </span>
+          )}
+          {meta.latency_ms && <span style={{ color: C.subtle }}>{meta.latency_ms}ms</span>}
+          {meta.ranking_method && (
+            <span style={{ background: C.blueLight, color: C.blue, border: `1px solid #bfdbfe`, borderRadius: 6, padding: '2px 8px', fontWeight: 600, fontSize: 11 }}>
+              {meta.ranking_method.toUpperCase()}
+            </span>
+          )}
         </div>
       )}
 

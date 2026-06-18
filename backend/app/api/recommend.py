@@ -440,11 +440,25 @@ async def recommend(q: SearchQuery):
         # ====================================================================
         total_time = (time.time() - start_time) * 1000
 
+        # NOTE: the constraint engine never removes suppliers (it only flags
+        # violations so the ranker can penalise them), so `viable_suppliers`
+        # is always the same length as `candidates`. Reporting that length as
+        # "after_constraints" was misleading — it always equalled
+        # total_candidates regardless of how restrictive the filters were,
+        # while the UI only ever renders the top 20 `results`. Count suppliers
+        # that pass ALL constraints instead, and report the actual number of
+        # results returned to the frontend so the two numbers shown in the UI
+        # are always consistent with what's on screen.
+        fully_matching = sum(
+            1 for s in viable_suppliers if not s.get('constraint_violated', False)
+        )
+
         response = {
             "results": results,
             "metadata": {
                 "total_candidates": len(candidates),
-                "after_constraints": len(viable_suppliers),
+                "after_constraints": fully_matching,
+                "results_returned": len(results),
                 "filters_applied": filter_summary.get('filters_applied', []),
                 "ranking_method": ranker.model_type if hasattr(ranker, 'model_type') and ranker.use_ml else "rule-based",
                 "retrieval_mode": q.retrieval_mode,

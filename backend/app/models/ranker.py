@@ -127,16 +127,49 @@ def extract_features_batch(suppliers: List[Dict], query: Dict) -> pd.DataFrame:
     return pd.DataFrame([extract_features(s, query) for s in suppliers])
 
 
+def rescale_scores(scores: np.ndarray) -> np.ndarray:
+    """
+    Soft re-scale: map the batch min→0.35 and batch max→0.95 so result pages
+    always show a meaningful spread instead of a flat line of near-zero scores.
+
+    Raw model output (ML or rule-based) is rarely well-calibrated to look good
+    as a percentage — a LightGBM ranker in particular is trained to get the
+    *order* right, not to produce numbers that look sensible on a 0-100% scale.
+    Without this step, genuinely well-matched suppliers can show as 0-20%
+    simply because the raw model output for this batch happened to be small,
+    even though they're correctly ranked relative to each other.
+    """
+    scores = np.clip(scores, 0.0, 1.0)
+    batch_min = scores.min()
+    batch_max = scores.max()
+    if batch_max - batch_min > 1e-6:
+        return 0.35 + (scores - batch_min) / (batch_max - batch_min) * 0.60
+    return np.full_like(scores, 0.70)  # all identical → show 70%
+
+
 def rule_based_score(feats: pd.DataFrame) -> np.ndarray:
-    return (
-        feats["price_match"] * 0.35 +
+    """
+    Weighted rule-based score normalised to [0, 1].
+
+    When no user constraints are set, price_match / location_match / cert_match
+    all default to 0.5 (neutral), which collapses the score floor. The semantic
+    relevance weight is boosted so FAISS cosine similarity becomes the primary
+    signal in that case. Final batch-level percentage spread is applied by
+    `rescale_scores()` in `rank()`, not here, so the same presentation logic
+    is shared with the ML scoring path.
+    """
+    raw = (
+        feats["price_match"] * 0.25 +
         (1 - feats["price_distance"]) * 0.10 +
-        feats["location_match"] * 0.20 +
-        feats["cert_match"] * 0.20 +
-        feats["years_normalized"] * 0.05 +
+        feats["location_match"] * 0.15 +
+        feats["cert_match"] * 0.15 +
+        feats["years_normalized"] * 0.10 +
         feats["is_manufacturer"] * 0.05 +
-        feats["faiss_score"] * 0.05
+        feats["faiss_score"] * 0.20        # raised from 0.05 — semantic relevance matters
     ).values
+
+    theoretical_max = 0.25 * 1 + 0.10 + 0.15 * 1 + 0.15 * 1 + 0.10 * 1 + 0.05 * 1 + 0.20 * 1  # = 1.0
+    return np.clip(raw / theoretical_max, 0.0, 1.0)
 
 
 class SupplierRanker:
@@ -171,21 +204,27 @@ class SupplierRanker:
 
         if self.use_ml and self.model is not None:
             try:
-                scores = self.model.predict(feats[FEATURE_COLS].values)
-                scores = np.clip(scores, 0, 1)
+                raw_scores = self.model.predict(feats[FEATURE_COLS].values)
+                raw_scores = np.clip(raw_scores, 0, 1)
             except Exception as e:
                 logger.error(f"ML prediction failed: {e}")
-                scores = rule_based_score(feats)
+                raw_scores = rule_based_score(feats)
         else:
-            scores = rule_based_score(feats)
+            raw_scores = rule_based_score(feats)
+
+        # Apply the same batch-level rescale regardless of which scoring path
+        # ran, so displayed percentages are always meaningful (see
+        # rescale_scores() docstring for why this is needed).
+        scores = rescale_scores(raw_scores)
 
         for i, s in enumerate(suppliers):
-            raw_score = float(scores[i])
-            s["score"] = apply_constraint_penalty(raw_score, s)
-            s["raw_score"] = raw_score  # Keep raw score for transparency
+            raw_score = float(raw_scores[i])
+            s["score"] = apply_constraint_penalty(float(scores[i]), s)
+            s["raw_score"] = raw_score  # Keep the unscaled model score for transparency
             s["reasons"] = self._reasons(s, query, feats.iloc[i])
 
         return sorted(suppliers, key=lambda x: x["score"], reverse=True)
+
 
     def _reasons(self, s: dict, q: dict, f: pd.Series) -> List[str]:
         r = ["Relevant product match"]
