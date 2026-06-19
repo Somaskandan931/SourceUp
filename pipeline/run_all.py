@@ -235,6 +235,12 @@ def assign_locations_to_suppliers():
         "Vadodara", "Coimbatore", "Kochi", "Visakhapatnam", "Patna"
     ]
 
+    TIER3_CITIES = [
+        "Agra", "Nashik", "Faridabad", "Meerut", "Rajkot",
+        "Varanasi", "Amritsar", "Allahabad", "Ranchi", "Jodhpur",
+        "Guwahati", "Mysore", "Tiruchirappalli", "Salem", "Dehradun"
+    ]
+
     if not cfg.CLEAN_DATA.exists():
         print("❌ Clean data not found. Run pipeline without --skip-features first.")
         return False
@@ -291,7 +297,7 @@ def assign_locations_to_suppliers():
         elif rand < 0.8:
             opts = [c for c in cities if c in TIER2_CITIES] or TIER2_CITIES
         else:
-            opts = TIER3_CITIES
+            opts = [c for c in cities if c in TIER3_CITIES] or TIER3_CITIES
         return rng.choice(opts)
 
     locations = []
