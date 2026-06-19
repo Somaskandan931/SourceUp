@@ -23,6 +23,7 @@ from config import cfg
 
 # Import SBERT retriever - fix path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # Goes up to project root
+from backend.app.utils.fields import get_field
 from backend.app.models.retriever import retrieve
 
 CLEAN_DATA = str(cfg.CLEAN_DATA)
@@ -336,7 +337,7 @@ def build_training_data(
                 else:
                     sbert_score = np.random.uniform(0.1, 0.4)
 
-                price = parse_price(supplier.get("price min") or supplier.get("price", 0))
+                price = parse_price(get_field(supplier, "price_min") or supplier.get("price", 0))
 
                 # Price features
                 if max_price and max_price > 0 and price > 0:
@@ -347,12 +348,7 @@ def build_training_data(
                     price_match, price_ratio, price_distance = 0.5, 1.0, 0.0
 
                 # Location — read from both possible key names
-                s_loc = str(
-                    supplier.get("location")
-                    or supplier.get("supplier_location")
-                    or supplier.get("supplier location")
-                    or ""
-                ).lower()
+                s_loc = str(get_field(supplier, "supplier_location") or get_field(supplier, "location", default="")).lower()
                 if target_loc:
                     location_match = 1.0 if target_loc.lower() in s_loc else 0.0
                 else:
@@ -365,14 +361,22 @@ def build_training_data(
                 else:
                     cert_match = 0.5
 
-                # Years
-                years = supplier.get("years with gs", 0) or 0
+                # Years — cold-start fix: a brand-new supplier with no tenure
+                # data should be treated as *neutral* (0.5), not penalized
+                # (0.0). Otherwise every new supplier gets buried regardless
+                # of how well they actually match the query.
+                years = get_field(supplier, "years_with_gs", "years_on_platform", default=None)
                 try:
-                    years_norm = min(float(years) / 10.0, 1.0)
-                except:
-                    years_norm = 0.0
+                    if years is None or str(years).strip() in ("", "0", "nan", "none"):
+                        years_norm = 0.5  # missing tenure → neutral, not 0
+                    else:
+                        years_norm = min(float(years) / 10.0, 1.0)
+                        if years_norm < 0.1:
+                            years_norm = max(years_norm, 0.3)  # cold-start floor
+                except (ValueError, TypeError):
+                    years_norm = 0.5
 
-                biz = str(supplier.get("business type", "")).lower()
+                biz = str(get_field(supplier, "business_type", default="")).lower()
                 is_manuf = 1.0 if "manufacturer" in biz else 0.0
                 is_trading = 1.0 if "trading" in biz else 0.0
 
@@ -381,12 +385,7 @@ def build_training_data(
                 )
 
                 # Carry real city name through so fairness.py gets actual location data.
-                raw_location = (
-                    supplier.get("location")
-                    or supplier.get("supplier_location")
-                    or supplier.get("supplier location")
-                    or ""
-                )
+                raw_location = get_field(supplier, "supplier_location") or get_field(supplier, "location", default="")
 
                 constraint_score = (
                                            price_match +

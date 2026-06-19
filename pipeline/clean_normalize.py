@@ -10,10 +10,17 @@ import pandas as pd
 from config import cfg
 
 
-def load_schema():
-    if not os.path.exists(str(cfg.SCHEMA_FILE)):
-        raise FileNotFoundError(f"Schema file not found: {cfg.SCHEMA_FILE}")
-    return [c.strip().lower() for c in pd.read_csv(str(cfg.SCHEMA_FILE), nrows=0).columns]
+# Canonical schema — hardcoded so clean_normalize no longer depends on an
+# external schema CSV (cfg.SCHEMA_FILE) that may not exist in every run.
+# Any of these columns present in the merged data are kept; unknown columns
+# are dropped silently. Add new fields here as they're scraped.
+CANONICAL_COLUMNS = [
+    "supplier_name", "product_name", "category", "price", "moq",
+    "location", "city", "state", "country", "years_with_gs",
+    "rating", "review_count", "response_rate", "verified",
+    "description", "image_url", "profile_url", "contact",
+    "tags", "certifications",
+]
 
 
 def clean():
@@ -23,10 +30,15 @@ def clean():
             "Run validate_merge.py first."
         )
     os.makedirs(str(cfg.CLEAN_DIR), exist_ok=True)
-    schema_cols = load_schema()
     df = pd.read_csv(str(cfg.MERGED_DATA))
     df.columns = [c.strip().lower() for c in df.columns]
-    df = df[[c for c in schema_cols if c in df.columns]]
+    keep_cols = [c for c in CANONICAL_COLUMNS if c in df.columns]
+    if not keep_cols:
+        # Fallback: schema didn't match anything (e.g. scraper changed field
+        # names) — keep all columns rather than silently producing an empty df.
+        print("⚠️  No canonical columns matched — keeping all columns as-is.")
+        keep_cols = list(df.columns)
+    df = df[keep_cols]
     df.drop_duplicates(inplace=True)
     for col in df.columns:
         df[col] = df[col].astype(str).str.strip()

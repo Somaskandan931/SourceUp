@@ -8,6 +8,8 @@ Compares SourceUp's full model against three standard baselines:
   B3: Rule-Based Ranker (heuristic scorer from ranker.py, no LTR)
   B4: Random Ranking (theoretical lower bound)
   S1: SourceUp Full Model (constraint-aware LambdaRank — our system)
+  A1: XGBoost LambdaMART (ablation — same ranking objective, different GBM)
+  A2: LightGBM Regression (ablation — same GBM, no ranking objective)
 
 Metrics: NDCG@10, P@5, MAP, CVR, Kendall-τ, MRR
 Statistical significance: paired Wilcoxon signed-rank test vs S1.
@@ -270,6 +272,51 @@ def score_rule_based_default(df: pd.DataFrame) -> np.ndarray:
     return _np.nan_to_num(scores, nan=0.0, posinf=1.0, neginf=0.0)
 
 
+def score_xgboost_lambdamart(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndarray:
+    """Ablation: XGBoost LambdaMART — same ranking objective, different GBM
+    implementation. Answers 'is it LambdaRank or just LightGBM?'"""
+    try:
+        import xgboost as xgb
+    except ImportError:
+        print("   ⚠️  xgboost not installed — pip install xgboost. Skipping ablation.")
+        return score_rule_based_default(df_test)
+
+    train_sorted = df_train.sort_values("query_id")
+    group_sizes = train_sorted.groupby("query_id").size().values
+
+    model = xgb.XGBRanker(
+        objective="rank:ndcg",
+        learning_rate=0.05,
+        n_estimators=200,
+        max_depth=6,
+        random_state=42,
+    )
+    model.fit(
+        train_sorted[FEATURE_COLS],
+        train_sorted["relevance"],
+        group=group_sizes,
+    )
+    return model.predict(df_test[FEATURE_COLS])
+
+
+def score_lightgbm_regression(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndarray:
+    """Ablation: plain LightGBM regression (MSE objective, no ranking-aware
+    loss). Answers 'is it the LambdaRank objective or just gradient boosting
+    being powerful?'"""
+    import lightgbm as lgb
+
+    model = lgb.LGBMRegressor(
+        objective="regression",
+        learning_rate=0.05,
+        n_estimators=200,
+        max_depth=6,
+        random_state=42,
+        verbosity=-1,
+    )
+    model.fit(df_train[FEATURE_COLS], df_train["relevance"])
+    return model.predict(df_test[FEATURE_COLS])
+
+
 def score_bm25 ( df_train: pd.DataFrame, df_test: pd.DataFrame ) -> np.ndarray :
     """
     B1: BM25 baseline.
@@ -416,11 +463,13 @@ def wilcoxon_vs_sourceup(sourceup_ndcg: List[float],
 # ============================================================================
 
 _PALETTE = {
-    "S1: SourceUp Full":   "#2166ac",
-    "B1: BM25":            "#d73027",
-    "B2: SBERT Cosine":    "#f46d43",
-    "B3: Rule-Based":      "#fdae61",
-    "B4: Random":          "#cccccc",
+    "S1: SourceUp Full":        "#2166ac",
+    "B1: BM25":                 "#d73027",
+    "B2: SBERT Cosine":         "#f46d43",
+    "B3: Rule-Based":           "#fdae61",
+    "B4: Random":               "#cccccc",
+    "A1: XGBoost LambdaMART":   "#4dac26",
+    "A2: LightGBM Regression":  "#762a83",
 }
 
 
@@ -454,7 +503,7 @@ def plot_comparison_bar(results_df: pd.DataFrame):
     ax.set_ylim(0, 1.08)
     ax.set_title(
         "Table II — Baseline Comparison: SourceUp vs Standard Retrieval Methods\n"
-        "(S1 = SourceUp; B1–B4 = baselines)",
+        "(S1 = SourceUp; B1–B4 = baselines; A1–A2 = ablations)",
         fontsize=12, fontweight="bold"
     )
     ax.legend(loc="upper right", fontsize=9)
@@ -485,7 +534,7 @@ def plot_ndcg_per_query_distributions(system_ndcgs: Dict[str, List[float]]):
         whiskerprops={"linewidth": 1.5},
         flierprops={"marker": "o", "markersize": 4, "alpha": 0.5},
     )
-    colors = ["#2166ac", "#d73027", "#f46d43", "#fdae61", "#aaaaaa"]
+    colors = [_PALETTE.get(s, "#999999") for s in systems]
     for patch, color in zip(bp["boxes"], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.7)
@@ -614,6 +663,26 @@ def run_baselines():
     print(f"   NDCG@10 = {r['NDCG@10']:.4f}")
 
     # ------------------------------------------------------------------
+    # A1: XGBoost LambdaMART (ablation — different GBM, same objective)
+    # ------------------------------------------------------------------
+    print("▶ A1: XGBoost LambdaMART (ablation)")
+    pred_a1 = score_xgboost_lambdamart(df_train, df_test)
+    r = full_eval("A1: XGBoost LambdaMART", y_test, pred_a1, df_test, query_test)
+    ndcg_dists["A1: XGBoost LambdaMART"] = r.pop("_ndcg_per_query")
+    results.append(r)
+    print(f"   NDCG@10 = {r['NDCG@10']:.4f}")
+
+    # ------------------------------------------------------------------
+    # A2: LightGBM Regression (ablation — same GBM, no ranking objective)
+    # ------------------------------------------------------------------
+    print("▶ A2: LightGBM Regression (ablation)")
+    pred_a2 = score_lightgbm_regression(df_train, df_test)
+    r = full_eval("A2: LightGBM Regression", y_test, pred_a2, df_test, query_test)
+    ndcg_dists["A2: LightGBM Regression"] = r.pop("_ndcg_per_query")
+    results.append(r)
+    print(f"   NDCG@10 = {r['NDCG@10']:.4f}")
+
+    # ------------------------------------------------------------------
     # Compile results
     # ------------------------------------------------------------------
     results_df = pd.DataFrame(results)
@@ -638,7 +707,8 @@ def run_baselines():
     print("\n📈 Statistical Significance (Wilcoxon signed-rank, SourceUp > Baseline):")
     sourceup_ndcg = ndcg_dists["S1: SourceUp Full"]
     sig_rows = []
-    for bname in ["B1: BM25", "B2: SBERT Cosine", "B3: Rule-Based", "B4: Random"]:
+    for bname in ["B1: BM25", "B2: SBERT Cosine", "B3: Rule-Based", "B4: Random",
+                  "A1: XGBoost LambdaMART", "A2: LightGBM Regression"]:
         sig_rows.append(wilcoxon_vs_sourceup(sourceup_ndcg, ndcg_dists[bname], bname))
     sig_df = pd.DataFrame(sig_rows)
     print(sig_df.to_string(index=False))

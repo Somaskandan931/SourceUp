@@ -122,9 +122,9 @@ def retrieve(query: str, k: int = 200) -> List[Dict]:  # FIX 7: Increased defaul
             s["_index"] = int(idx)
             # Guarantee all ranking-critical fields exist with safe defaults
             for field, default in [
-                ("price", None), ("price min", None),
-                ("supplier location", ""), ("location", ""),
-                ("certifications", ""), ("years with gs", 0),
+                ("price", None), ("price_min", None),
+                ("supplier_location", ""), ("location", ""),
+                ("certifications", ""), ("years_with_gs", 0),
             ]:
                 if s.get(field) is None:
                     s[field] = default

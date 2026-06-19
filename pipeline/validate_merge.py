@@ -19,26 +19,36 @@ from config import cfg
 # ------------------------------------------------------------
 # Load canonical schema
 # ------------------------------------------------------------
+# Canonical columns derived from GlobalSources scraper schema (primary data source)
+CANONICAL_COLUMNS = [
+    "query", "product name", "product id", "model number",
+    "price", "price min", "price max", "min order qty", "unit",
+    "lead time", "fob port", "product url", "image url",
+    "company name", "supplier name", "supplier location",
+    "business type", "certifications", "years with gs",
+    "category l1", "category l2", "category l3", "category l4",
+]
+
+# Column aliases: maps alternative names from other scrapers → canonical
+COLUMN_ALIASES = {
+    "years on platform": "years with gs",
+    "years_on_platform": "years with gs",
+    "company": "company name",
+    "supplier": "supplier name",
+    "location": "supplier location",
+    "city": "supplier location",   # indiamart uses separate city column
+    "description": "product name",
+    "moq": "min order qty",
+}
+
+
 def load_canonical_schema():
-
     schema_path = str(cfg.SCHEMA_FILE)
-
-    if not os.path.exists(schema_path):
-        raise FileNotFoundError(
-            f"Schema file not found: {schema_path}"
-        )
-
-    schema_df = pd.read_csv(
-        schema_path,
-        nrows=0
-    )
-
-    canonical = [
-        c.strip().lower()
-        for c in schema_df.columns
-    ]
-
-    return canonical
+    if os.path.exists(schema_path):
+        schema_df = pd.read_csv(schema_path, nrows=0)
+        return [c.strip().lower() for c in schema_df.columns]
+    # Fall back to hardcoded GlobalSources schema — no schema file required
+    return CANONICAL_COLUMNS
 
 
 # ------------------------------------------------------------
@@ -53,11 +63,7 @@ def normalize_columns(df):
     ]
 
     # alternative column mappings
-    rename_map = {
-        "years on platform": "years with gs",
-        "company": "company name",
-        "supplier": "supplier name",
-    }
+    rename_map = COLUMN_ALIASES
 
     df = df.rename(columns=rename_map)
 

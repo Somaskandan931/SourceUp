@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Literal
 from config import cfg
+from backend.app.utils.fields import get_field
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,9 +50,11 @@ def parse_price(v) -> float:
 
 
 def extract_features(supplier: dict, query: dict) -> dict:
-    supplier_price = parse_price(supplier.get("price min") or supplier.get("price", 0))
-    qmax = query.get("max_price")
+    # Use get_field to correctly resolve underscore-normalised keys
+    raw_price = get_field(supplier, "price_min") or get_field(supplier, "price", default=0)
+    supplier_price = parse_price(raw_price)
 
+    qmax = query.get("max_price")
     if qmax is not None:
         qmax = float(qmax)
         price_match = 1.0 if supplier_price > 0 and supplier_price <= qmax else 0.0
@@ -60,30 +63,27 @@ def extract_features(supplier: dict, query: dict) -> dict:
     else:
         price_match, price_ratio, price_distance = 0.5, 1.0, 0.0
 
-    s_loc = str(supplier.get("supplier location") or supplier.get("location", "")).lower().strip()
+    s_loc = str(get_field(supplier, "supplier_location") or get_field(supplier, "location", default="")).lower().strip()
     q_loc = str(query.get("location") or "").lower().strip()
 
-    # Location match is computed purely as a constraint-satisfaction binary.
-    # We deliberately avoid giving partial credit for "same country / same tier"
-    # to prevent the model from learning a Metro-city proxy signal.
     if not s_loc or not q_loc:
-        location_match = 0.5          # no constraint specified → neutral
+        location_match = 0.5
     elif q_loc in s_loc or s_loc in q_loc:
-        location_match = 1.0          # constraint satisfied
+        location_match = 1.0
     else:
-        location_match = 0.0          # constraint violated
+        location_match = 0.0
 
-    s_cert = str(supplier.get("certifications") or "").lower()
+    s_cert = str(get_field(supplier, "certifications", default="") or "").lower()
     q_cert = str(query.get("certification") or "").lower()
     cert_match = (1.0 if q_cert in s_cert else 0.0) if q_cert else 0.5
 
-    years = supplier.get("years with gs", 0) or 0
+    years = get_field(supplier, "years_with_gs", "years_on_platform", default=0) or 0
     try:
         years_normalized = min(float(years) / 10.0, 1.0)
     except Exception:
         years_normalized = 0.0
 
-    biz = str(supplier.get("business type") or "").lower()
+    biz = str(get_field(supplier, "business_type", default="") or "").lower()
     is_manufacturer = 1.0 if "manufacturer" in biz else 0.0
     is_trading_company = 1.0 if "trading company" in biz else 0.0
 
@@ -96,7 +96,6 @@ def extract_features(supplier: dict, query: dict) -> dict:
         "years_normalized": years_normalized,
         "is_manufacturer": is_manufacturer,
         "is_trading_company": is_trading_company,
-        # Accept both key names — retriever now stores semantic_score; keep faiss_score alias
         "faiss_score": float(supplier.get("semantic_score") or supplier.get("faiss_score", 0.0)),
         "faiss_rank": int(supplier.get("faiss_rank") or supplier.get("rank", 999)),
         "supplier_price": supplier_price,
@@ -104,21 +103,7 @@ def extract_features(supplier: dict, query: dict) -> dict:
 
 
 def apply_constraint_penalty(score: float, supplier: dict, gamma: float = 0.5) -> float:
-    """
-    Penalise suppliers that violate hard constraints without removing them.
-    This keeps CSR (Constraint Satisfaction Rate) meaningful while surfacing violators at the
-    bottom of the ranked list so the UI can show them as 'not recommended'.
-
-    Args:
-        score:    raw model/rule score
-        supplier: supplier dict (must have 'constraint_violated' key)
-        gamma:    penalty magnitude (default 0.5)
-
-    Returns:
-        Adjusted score.
-    """
     if supplier.get("constraint_violated", False):
-        # FIX 5: Quadratic penalty — stronger signal, visible CSR drop in ablation
         return score - gamma * (gamma ** 2 + 1)
     return score
 
@@ -128,36 +113,15 @@ def extract_features_batch(suppliers: List[Dict], query: Dict) -> pd.DataFrame:
 
 
 def rescale_scores(scores: np.ndarray) -> np.ndarray:
-    """
-    Soft re-scale: map the batch min→0.35 and batch max→0.95 so result pages
-    always show a meaningful spread instead of a flat line of near-zero scores.
-
-    Raw model output (ML or rule-based) is rarely well-calibrated to look good
-    as a percentage — a LightGBM ranker in particular is trained to get the
-    *order* right, not to produce numbers that look sensible on a 0-100% scale.
-    Without this step, genuinely well-matched suppliers can show as 0-20%
-    simply because the raw model output for this batch happened to be small,
-    even though they're correctly ranked relative to each other.
-    """
     scores = np.clip(scores, 0.0, 1.0)
     batch_min = scores.min()
     batch_max = scores.max()
     if batch_max - batch_min > 1e-6:
         return 0.35 + (scores - batch_min) / (batch_max - batch_min) * 0.60
-    return np.full_like(scores, 0.70)  # all identical → show 70%
+    return np.full_like(scores, 0.70)
 
 
 def rule_based_score(feats: pd.DataFrame) -> np.ndarray:
-    """
-    Weighted rule-based score normalised to [0, 1].
-
-    When no user constraints are set, price_match / location_match / cert_match
-    all default to 0.5 (neutral), which collapses the score floor. The semantic
-    relevance weight is boosted so FAISS cosine similarity becomes the primary
-    signal in that case. Final batch-level percentage spread is applied by
-    `rescale_scores()` in `rank()`, not here, so the same presentation logic
-    is shared with the ML scoring path.
-    """
     raw = (
         feats["price_match"] * 0.25 +
         (1 - feats["price_distance"]) * 0.10 +
@@ -165,11 +129,9 @@ def rule_based_score(feats: pd.DataFrame) -> np.ndarray:
         feats["cert_match"] * 0.15 +
         feats["years_normalized"] * 0.10 +
         feats["is_manufacturer"] * 0.05 +
-        feats["faiss_score"] * 0.20        # raised from 0.05 — semantic relevance matters
+        feats["faiss_score"] * 0.20
     ).values
-
-    theoretical_max = 0.25 * 1 + 0.10 + 0.15 * 1 + 0.15 * 1 + 0.10 * 1 + 0.05 * 1 + 0.20 * 1  # = 1.0
-    return np.clip(raw / theoretical_max, 0.0, 1.0)
+    return np.clip(raw, 0.0, 1.0)
 
 
 class SupplierRanker:
@@ -192,7 +154,6 @@ class SupplierRanker:
                     return
                 except Exception as e:
                     logger.error(f"Failed to load LightGBM model: {e}")
-
         logger.warning("⚠️ No ML model found — using rule-based fallback")
         self.use_ml = False
 
@@ -212,19 +173,15 @@ class SupplierRanker:
         else:
             raw_scores = rule_based_score(feats)
 
-        # Apply the same batch-level rescale regardless of which scoring path
-        # ran, so displayed percentages are always meaningful (see
-        # rescale_scores() docstring for why this is needed).
         scores = rescale_scores(raw_scores)
 
         for i, s in enumerate(suppliers):
             raw_score = float(raw_scores[i])
             s["score"] = apply_constraint_penalty(float(scores[i]), s)
-            s["raw_score"] = raw_score  # Keep the unscaled model score for transparency
+            s["raw_score"] = raw_score
             s["reasons"] = self._reasons(s, query, feats.iloc[i])
 
         return sorted(suppliers, key=lambda x: x["score"], reverse=True)
-
 
     def _reasons(self, s: dict, q: dict, f: pd.Series) -> List[str]:
         r = ["Relevant product match"]
@@ -236,7 +193,7 @@ class SupplierRanker:
             r.append("Partial location match")
         if f["cert_match"] > 0:
             r.append(f"{q.get('certification','Required')} certification")
-        yrs = s.get("years with gs", 0)
+        yrs = get_field(s, "years_with_gs", "years_on_platform", default=0) or 0
         try:
             if int(float(yrs)) >= 5:
                 r.append(f"{int(float(yrs))}+ years on platform")
