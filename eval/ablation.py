@@ -359,13 +359,13 @@ def score_v4_no_semantic(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.nd
     LightGBM on modified features.
     """
     # Build a text corpus from training products for BM25
-    if "product name" not in df_train.columns:
+    if "product_name" not in df_train.columns:
         # Graceful: if product name not in data, simulate with random noise
-        print("   ⚠️  'product name' column not found — simulating BM25 with noise")
+        print("   ⚠️  'product_name' column not found — simulating BM25 with noise")
         bm25_scores = np.random.uniform(0.3, 0.7, len(df_test))
     else:
-        corpus_train = df_train["product name"].fillna("").astype(str).tolist()
-        corpus_test  = df_test["product name"].fillna("").astype(str).tolist()
+        corpus_train = df_train["product_name"].fillna("").astype(str).tolist()
+        corpus_test  = df_test["product_name"].fillna("").astype(str).tolist()
 
         if BM25_AVAILABLE and corpus_train:
             tokenized = [doc.lower().split() for doc in corpus_train]

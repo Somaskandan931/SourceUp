@@ -9,6 +9,12 @@ from typing import List, Dict, Optional
 import numpy as np
 import pandas as pd
 
+try:
+    from rapidfuzz import fuzz
+    RAPIDFUZZ_AVAILABLE = True
+except ImportError:
+    RAPIDFUZZ_AVAILABLE = False
+
 from backend.app.utils.fields import get_field
 
 
@@ -104,7 +110,7 @@ class ConstraintEngine:
                     if 'certifications' not in self.filters_applied:
                         self.filters_applied.append('certifications')
 
-            # ── CONSTRAINT 5: Location Preference ────────────────────────────
+            # ── CONSTRAINT 5: Location Preference (RapidFuzz fuzzy match) ────
             preferred_location = constraints.get("preferred_location")
             location_mandatory = constraints.get("location_mandatory", False)
             if preferred_location:
@@ -112,13 +118,18 @@ class ConstraintEngine:
                     get_field(supplier, "supplier_location") or
                     get_field(supplier, "location", default="") or ""
                 ).lower()
-                is_preferred = preferred_location.lower() in supplier_location
+                if RAPIDFUZZ_AVAILABLE and supplier_location:
+                    fuzzy_score = fuzz.token_set_ratio(preferred_location.lower(), supplier_location)
+                else:
+                    fuzzy_score = 100.0 if preferred_location.lower() in supplier_location else 0.0
+                is_preferred = fuzzy_score >= 70
                 constraint_results['location'] = {
                     'passed': is_preferred or not location_mandatory,
                     'preferred': preferred_location,
                     'actual': supplier_location,
                     'mandatory': location_mandatory,
-                    'reason': f"Location {'matches' if is_preferred else 'differs from'} preference"
+                    'fuzzy_score': fuzzy_score,
+                    'reason': f"Location {'matches' if is_preferred else 'differs from'} preference (fuzzy={fuzzy_score:.0f})"
                 }
                 if location_mandatory and not is_preferred:
                     constraint_violated = True
@@ -192,12 +203,35 @@ class ConstraintEngine:
                 pass
         return 0.0
 
-    def _calculate_constraint_score(self, constraint_results: Dict) -> float:
+    def _calculate_constraint_score(self, constraint_results: Dict, gamma: float = 0.5) -> float:
+        """
+        Graduated soft scoring instead of binary passed/failed averaging.
+        A supplier slightly over budget/lead-time scores better than one
+        wildly over, instead of both being scored identically as 0.
+        """
         if not constraint_results:
             return 1.0
-        passed = sum(1 for c in constraint_results.values() if c.get('passed', True))
-        total = len(constraint_results)
-        return passed / total if total > 0 else 1.0
+        total = 0.0
+        count = 0
+        for key, c in constraint_results.items():
+            if key == 'budget' and 'supplier_price' in c and c.get('max_allowed'):
+                penalty = max(0.0, (c['supplier_price'] - c['max_allowed']) / c['max_allowed'])
+                total += max(0.0, 1.0 - gamma * penalty)
+            elif key == 'moq_affordability' and 'total_cost' in c and c.get('budget'):
+                penalty = max(0.0, (c['total_cost'] - c['budget']) / c['budget'])
+                total += max(0.0, 1.0 - gamma * penalty)
+            elif key == 'delivery_urgency' and 'lead_time' in c and c.get('max_allowed'):
+                penalty = max(0.0, (c['lead_time'] - c['max_allowed']) / c['max_allowed'])
+                total += max(0.0, 1.0 - gamma * penalty)
+            elif key == 'experience' and 'years' in c and c.get('min_required'):
+                shortfall = max(0.0, (c['min_required'] - c['years']) / c['min_required'])
+                total += max(0.0, 1.0 - gamma * shortfall)
+            elif key == 'location' and 'fuzzy_score' in c:
+                total += c['fuzzy_score'] / 100.0
+            else:
+                total += 1.0 if c.get('passed', True) else 0.0
+            count += 1
+        return total / count if count else 1.0
 
     def get_filter_summary(self) -> Dict:
         return {

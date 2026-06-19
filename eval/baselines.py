@@ -357,9 +357,16 @@ def score_bm25 ( df_train: pd.DataFrame, df_test: pd.DataFrame ) -> np.ndarray :
     else:
         text_col_train = text_col_test = "product_name"
 
-    # Build corpus and queries
-    corpus  = df_train[text_col_train].fillna( "unknown" ).astype( str ).tolist()
-    queries = df_test[text_col_test].fillna( "unknown" ).astype( str ).tolist()
+    # Build corpus and queries — combine product_name + supplier_name for a
+    # richer BM25 document when both are available (safer + better quality).
+    def _bm25_text(df, col):
+        if col == "product_name" and "supplier_name" in df.columns:
+            return (df["product_name"].fillna("").astype(str) + " " +
+                    df["supplier_name"].fillna("").astype(str)).tolist()
+        return df[col].fillna("unknown").astype(str).tolist()
+
+    corpus  = _bm25_text(df_train, text_col_train)
+    queries = _bm25_text(df_test, text_col_test)
 
     if BM25_AVAILABLE :
         tokenized_corpus = [doc.lower().split() for doc in corpus]
@@ -394,12 +401,27 @@ def score_sbert_cosine(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndar
     df_train.columns = [c.strip().lower().replace(' ', '_') for c in df_train.columns]
     df_test.columns = [c.strip().lower().replace(' ', '_') for c in df_test.columns]
 
-    if "product_name" not in df_test.columns:
+    def _sbert_text(df: pd.DataFrame) -> list:
+        if "product_name" in df.columns:
+            text = df["product_name"].fillna("").astype(str)
+            if "supplier_name" in df.columns:
+                text = text + " " + df["supplier_name"].fillna("").astype(str)
+            if "location" in df.columns:
+                text = text + " " + df["location"].fillna("").astype(str)
+            # Per-row fallback: empty product_name → use query_text instead
+            if "query_text" in df.columns:
+                qt = df["query_text"].fillna("").astype(str)
+                text = text.where(text.str.strip() != "", qt)
+            return text.tolist()
+        if "query_text" in df.columns:
+            return df["query_text"].fillna("").astype(str).tolist()
         print("   ⚠️  'product_name' column missing — returning FAISS scores as proxy")
-        return df_test["faiss_score"].values if "faiss_score" in df_test.columns else np.full(len(df_test), 0.5)
+        return None
 
-    corpus  = df_train["product_name"].fillna("").astype(str).tolist()
-    queries = df_test["product_name"].fillna("").astype(str).tolist()
+    corpus  = _sbert_text(df_train)
+    queries = _sbert_text(df_test)
+    if queries is None:
+        return df_test["faiss_score"].values if "faiss_score" in df_test.columns else np.full(len(df_test), 0.5)
 
     if SBERT_AVAILABLE:
         print("   Loading SBERT model (all-MiniLM-L6-v2)...")

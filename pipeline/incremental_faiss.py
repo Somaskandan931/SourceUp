@@ -72,15 +72,15 @@ def incremental_update():
     original_len = len(df)
 
     if (
-        "product name" in df.columns
+        "product_name" in df.columns
         and
-        "supplier name" in df.columns
+        "supplier_name" in df.columns
     ):
 
         df = df.drop_duplicates(
             subset=[
-                "product name",
-                "supplier name"
+                "product_name",
+                "supplier_name"
             ],
             keep="first"
         )
@@ -102,11 +102,12 @@ def incremental_update():
     # Select meaningful columns only
     # ------------------------------------------------------------
     preferred_cols = [
-        "supplier name",
-        "product name",
+        "supplier_name",
+        "product_name",
         "category",
         "country",
         "city",
+        "certifications",
         "description"
     ]
 
@@ -117,6 +118,12 @@ def incremental_update():
 
     if not embed_cols:
         embed_cols = df.columns.tolist()
+
+    # product_name is the single most valuable retrieval field — force it
+    # to the front of the embedding text even if preferred_cols matching
+    # above somehow missed it.
+    if "product_name" in df.columns and "product_name" not in embed_cols:
+        embed_cols.insert(0, "product_name")
 
     print("\n🧠 Embedding columns:")
 
