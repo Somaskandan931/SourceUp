@@ -265,8 +265,8 @@ drop is the real signal. The learned model's +0.2747 improvement over the
 label-independent baseline at p < 0.001 is the primary evidence that
 learning-to-rank adds value over heuristics.
 
-![Baseline comparison](eval/plots/baseline_comparison_bar.png)
-![Per-query NDCG@10 across baselines](eval/plots/baseline_ndcg_per_query.png)
+![Baseline comparison](data/eval/plots/baseline_comparison_bar.png)
+![Per-query NDCG@10 across baselines](data/eval/plots/baseline_ndcg_per_query.png)
 
 ### Statistical Significance (Wilcoxon Signed-Rank, n=62 queries)
 
@@ -280,7 +280,7 @@ learning-to-rank adds value over heuristics.
 | vs. XGBoost LambdaMART | −0.0061 | > 0.05 | ✗ |
 | vs. LightGBM Regression | −0.0078 | > 0.05 | ✗ |
 
-![Statistical significance table](eval/plots/baseline_significance_table.png)
+![Statistical significance table](data/eval/plots/baseline_significance_table.png)
 
 ### Ablation Study
 
@@ -297,9 +297,9 @@ Removing semantic retrieval causes Kendall's τ to collapse from 0.5277 to 0.014
 NDCG impact is small (−0.0382) but its CVR impact is large (+21.1% relative).
 Both matter.
 
-![Ablation NDCG@10](eval/plots/ablation_ndcg_bar.png)
-![Ablation NDCG/CVR trade-off](eval/plots/ablation_tradeoff.png)
-![Ablation results table](eval/plots/ablation_table.png)
+![Ablation NDCG@10](data/eval/plots/ablation_ndcg_bar.png)
+![Ablation NDCG/CVR trade-off](data/eval/plots/ablation_tradeoff.png)
+![Ablation results table](data/eval/plots/ablation_table.png)
 
 ### Robustness
 
@@ -312,10 +312,10 @@ Both matter.
 Kendall's τ = 0.9505 under moderate score perturbation (σ = 0.03), 0.9016 at
 σ = 0.10. The system is stable.
 
-![NDCG@10 under label noise](eval/plots/label_noise_robustness.png)
-![Kendall's τ under score perturbation (boxplot)](eval/plots/stability_tau_boxplot.png)
-![Stability heatmap across perturbation regimes](eval/plots/stability_heatmap.png)
-![NDCG@10 under retrieval/score noise](eval/plots/stability_noise_curve.png)
+![NDCG@10 under label noise](data/eval/plots/label_noise_robustness.png)
+![Kendall's τ under score perturbation (boxplot)](data/eval/plots/stability_tau_boxplot.png)
+![Stability heatmap across perturbation regimes](data/eval/plots/stability_heatmap.png)
+![NDCG@10 under retrieval/score noise](data/eval/plots/stability_noise_curve.png)
 
 ### Sensitivity
 
@@ -323,10 +323,10 @@ Kendall's τ = 0.9505 under moderate score perturbation (σ = 0.03), 0.9016 at
 test was run across loose/medium/strict regimes, and cross-category generalisation
 was checked across query splits.
 
-![γ sweep, stress test, and generalisation (combined)](eval/plots/sensitivity_combined.png)
-![NDCG@10 across the γ sweep](eval/plots/sensitivity_gamma_curve.png)
-![Constraint stress test](eval/plots/sensitivity_stress_bar.png)
-![Cross-category generalisation](eval/plots/sensitivity_generalization.png)
+![γ sweep, stress test, and generalisation (combined)](data/eval/plots/sensitivity_combined.png)
+![NDCG@10 across the γ sweep](data/eval/plots/sensitivity_gamma_curve.png)
+![Constraint stress test](data/eval/plots/sensitivity_stress_bar.png)
+![Cross-category generalisation](data/eval/plots/sensitivity_generalization.png)
 
 ### Fairness
 
@@ -338,22 +338,22 @@ was checked across query splits.
 | KS test p-value | 0.4522 | No significant distribution difference |
 | Counterfactual score change | 0.0000 | Flipping location tag → zero score change |
 
-![Supplier exposure by geographic tier](eval/plots/fairness_exposure_bar.png)
-![Disparate impact ratio curve](eval/plots/fairness_dir_curve.png)
-![Score distribution: Metro vs. Tier-2/3](eval/plots/fairness_score_distribution.png)
-![Counterfactual location-flip test](eval/plots/fairness_counterfactual.png)
+![Supplier exposure by geographic tier](data/eval/plots/fairness_exposure_bar.png)
+![Disparate impact ratio curve](data/eval/plots/fairness_dir_curve.png)
+![Score distribution: Metro vs. Tier-2/3](data/eval/plots/fairness_score_distribution.png)
+![Counterfactual location-flip test](data/eval/plots/fairness_counterfactual.png)
 
 ### SHAP Explainability
 
-![SHAP mean |value| summary](eval/plots/shap_summary_bar.png)
-![SHAP summary beeswarm](eval/plots/shap_summary_beeswarm.png)
-![SHAP feature correlation heatmap](eval/plots/shap_heatmap.png)
-![SHAP waterfall — single supplier decision](eval/plots/shap_waterfall.png)
-![SHAP force plot — top-ranked supplier](eval/plots/shap_force_top_supplier.png)
-![SHAP dependence — faiss_score](eval/plots/shap_dependence_faiss_score.png)
-![SHAP dependence — cert_match](eval/plots/shap_dependence_cert_match.png)
-![SHAP dependence — location_match](eval/plots/shap_dependence_location_match.png)
-![SHAP dependence — price_ratio](eval/plots/shap_dependence_price_ratio.png)
+![SHAP mean |value| summary](data/eval/plots/shap_summary_bar.png)
+![SHAP summary beeswarm](data/eval/plots/shap_summary_beeswarm.png)
+![SHAP feature correlation heatmap](data/eval/plots/shap_heatmap.png)
+![SHAP waterfall — single supplier decision](data/eval/plots/shap_waterfall.png)
+![SHAP force plot — top-ranked supplier](data/eval/plots/shap_force_top_supplier.png)
+![SHAP dependence — faiss_score](data/eval/plots/shap_dependence_faiss_score.png)
+![SHAP dependence — cert_match](data/eval/plots/shap_dependence_cert_match.png)
+![SHAP dependence — location_match](data/eval/plots/shap_dependence_location_match.png)
+![SHAP dependence — price_ratio](data/eval/plots/shap_dependence_price_ratio.png)
 
 ### Latency (Warm-Start, Models Resident in Memory)
 
