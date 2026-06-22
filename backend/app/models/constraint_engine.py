@@ -124,7 +124,17 @@ class ConstraintEngine:
                     fuzzy_score = 100.0 if preferred_location.lower() in supplier_location else 0.0
                 is_preferred = fuzzy_score >= 70
                 constraint_results['location'] = {
-                    'passed': is_preferred or not location_mandatory,
+                    # FIX: 'passed' now reflects the ACTUAL fuzzy match result,
+                    # regardless of whether location is mandatory.  Previously it
+                    # was set to (is_preferred OR NOT location_mandatory), which
+                    # silently forced passed=True for every non-mandatory location
+                    # query — producing false "100% location match" counts in
+                    # case_study.py and any caller that reads constraint_results
+                    # ['location']['passed'] to count real location matches.
+                    # 'passed' = did the supplier's location actually match?
+                    # 'mandatory' = does a mismatch cause constraint_violated?
+                    # These are two separate questions and must not be conflated.
+                    'passed': is_preferred,
                     'preferred': preferred_location,
                     'actual': supplier_location,
                     'mandatory': location_mandatory,

@@ -51,7 +51,7 @@ class DecisionTrace :
         """
         trace = {
             'supplier_name' : self._get_supplier_name( supplier ),
-            'final_score' : round( final_score, 4 ),
+            'final_score' : round( float( final_score ), 4 ),
             'contributions' : {},
             'constraints' : {},
             'summary' : []
@@ -66,7 +66,7 @@ class DecisionTrace :
         trace['contributions']['semantic_match'] = {
             'raw_score' : round( float( faiss_score ), 4 ),
             'weight' : 0.05,
-            'contribution' : round( semantic_contribution, 4 ),
+            'contribution' : round( float( semantic_contribution ), 4 ),
             'explanation' : f"Product matches '{query.get( 'product', 'query' )}' with {faiss_score:.2f} similarity"
         }
 
@@ -90,8 +90,8 @@ class DecisionTrace :
         trace['contributions']['price'] = {
             'raw_score' : round( float( price_match ), 4 ),
             'weight' : 0.35,
-            'contribution' : round( price_contribution, 4 ),
-            'supplier_price' : supplier_price,
+            'contribution' : round( float( price_contribution ), 4 ),
+            'supplier_price' : float( supplier_price ),
             'max_price' : max_price,
             'explanation' : price_explanation
         }
@@ -106,7 +106,7 @@ class DecisionTrace :
         trace['contributions']['price_competitiveness'] = {
             'raw_score' : round( float( price_comp_score ), 4 ),
             'weight' : 0.10,
-            'contribution' : round( price_comp_contribution, 4 ),
+            'contribution' : round( float( price_comp_contribution ), 4 ),
             'explanation' : f"Price is {(1 - price_distance) * 100:.0f}% competitive"
         }
 
@@ -132,7 +132,7 @@ class DecisionTrace :
         trace['contributions']['location'] = {
             'raw_score' : round( float( location_match ), 4 ),
             'weight' : 0.20,
-            'contribution' : round( location_contribution, 4 ),
+            'contribution' : round( float( location_contribution ), 4 ),
             'supplier_location' : supplier_location,
             'preferred_location' : query_location,
             'explanation' : location_explanation
@@ -157,7 +157,7 @@ class DecisionTrace :
         trace['contributions']['certification'] = {
             'raw_score' : round( float( cert_match ), 4 ),
             'weight' : 0.20,
-            'contribution' : round( cert_contribution, 4 ),
+            'contribution' : round( float( cert_contribution ), 4 ),
             'required' : query_cert,
             'has' : supplier_certs,
             'explanation' : cert_explanation
@@ -173,7 +173,7 @@ class DecisionTrace :
         trace['contributions']['experience'] = {
             'raw_score' : round( float( years_normalized ), 4 ),
             'weight' : 0.05,
-            'contribution' : round( experience_contribution, 4 ),
+            'contribution' : round( float( experience_contribution ), 4 ),
             'years' : years,
             'explanation' : f"{years} years on platform"
         }
@@ -188,7 +188,7 @@ class DecisionTrace :
         trace['contributions']['business_type'] = {
             'raw_score' : round( float( is_manufacturer ), 4 ),
             'weight' : 0.05,
-            'contribution' : round( business_contribution, 4 ),
+            'contribution' : round( float( business_contribution ), 4 ),
             'type' : business_type,
             'explanation' : f"Business type: {business_type}"
         }

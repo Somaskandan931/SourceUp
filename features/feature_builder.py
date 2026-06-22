@@ -1,30 +1,67 @@
-# features/feature_builder.py - CORRECTED IMPORTS
-
 """
 Feature Builder — SourceUp Supplier Ranking (SBERT-Primary)
 ------------------------------------------------------------
 Builds training data ONLY from SBERT-retrieved candidates.
+
+Relevance labels are produced via weak supervision: see
+backend/app/training/weak_label_generator.py for the labeling
+methodology, and configs/weak_labels.yaml for the heuristic weights.
 """
 
 import os
 import sys
+import re
 import warnings
+import hashlib
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 warnings.filterwarnings("ignore")
 
-# Fix: Add project root to path
-PROJECT_ROOT = str(Path(__file__).resolve().parents[1])  # Goes up to SourceUp/
-sys.path.insert(0, PROJECT_ROOT)
 
+def _stable_hash(s: str) -> int:
+    """
+    Deterministic string -> int hash, safe for use as an RNG seed.
+
+    WHY THIS EXISTS: this module previously used Python's built-in
+    hash(str) to derive per-query RNG seeds (e.g. hash(base_query) % 2**31).
+    Python randomizes str hashing per-process by default (PYTHONHASHSEED
+    is a random salt set at interpreter startup) specifically to prevent
+    hash-flooding attacks — it is NOT reproducible across runs, which
+    silently defeated the entire point of "seeding" these generators.
+    This was the root cause of run-to-run differences in retrieved
+    candidates, sampled hard negatives, and injected FAISS noise (e.g.
+    "vacuum seal food packaging bulk" vs "...export" between identical
+    pipeline runs), which in turn produced misleading swings in CVR,
+    NDCG, and stability metrics that had nothing to do with the actual
+    label-generation or model changes being tested.
+    """
+    return int(hashlib.md5(s.encode("utf-8")).hexdigest(), 16) % (2**31)
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
-# Import SBERT retriever - fix path
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # Goes up to project root
 from backend.app.utils.fields import get_field
 from backend.app.models.retriever import retrieve
+from backend.app.training.weak_label_generator import (
+    compute_weak_label,
+    load_weak_label_config,
+    save_weak_label_metadata,
+    rebucket_by_quantile,
+)
+
+# Weak-label weights/thresholds/noise are now sourced from
+# configs/weak_labels.yaml instead of being hardcoded here.
+_WEAK_LABEL_CONFIG = load_weak_label_config()
 
 CLEAN_DATA = str(cfg.CLEAN_DATA)
 QUERY_FILE = str(cfg.QUERY_FILE)
@@ -159,45 +196,12 @@ def _location_sampling_weights(df_suppliers: pd.DataFrame, loc_col: str) -> np.n
     return np.concatenate([[NO_CONSTRAINT_PROB], city_weights])
 
 
-def compute_relevance(
-    sbert_score,
-    price_match,
-    location_match,
-    cert_match,
-    years_norm,
-):
-
-    hidden_factor = np.random.normal(0, 0.30)
-
-    score = (
-        0.25 * sbert_score +
-        0.20 * price_match +
-        0.20 * location_match +
-        0.20 * cert_match +
-        0.10 * years_norm +
-        0.05 * hidden_factor
-    )
-
-    if np.random.rand() < 0.15:
-        score += np.random.normal(0, 0.15)
-
-    score = float(np.clip(score, 0, 1))
-
-    if score >= 0.75:
-        return 3
-    elif score >= 0.55:
-        return 2
-    elif score >= 0.35:
-        return 1
-    else:
-        return 0
-
-
 def build_training_data(
     top_k: int = 50,
     queries_per_constraint: int = 5,
     gamma: float = 0.3,          # kept for CLI compatibility, not used
     hard_negative_ratio: float = 1.0,  # kept for CLI compatibility, not used
+    seed: int = 42,
 ) -> pd.DataFrame:
     """
     Build training dataset using SBERT as PRIMARY retrieval.
@@ -223,6 +227,16 @@ def build_training_data(
     print(f"   hard-negative strategy:  stratified (40% metro / 40% tier2 / 20% intl)")
     print(f"   constraint locations:    {len(CONSTRAINT_LOCATIONS)} cities (metro + tier2)")
 
+    # Seed the global numpy RNG so the few remaining fallback paths that
+    # use np.random.* directly (rather than a per-query _stable_hash seed)
+    # are also reproducible run-to-run. Combined with the _stable_hash()
+    # fix above (Python's built-in hash() is randomized per-process and
+    # was silently making every "seeded" RNG in this file non-reproducible),
+    # this makes the whole training-data build deterministic for a fixed
+    # `seed`, which matters for the paper's reported metrics being stable
+    # across reruns rather than swinging with sampling noise.
+    np.random.seed(seed)
+
     df_suppliers = load_suppliers()
     queries = load_queries()
 
@@ -237,12 +251,14 @@ def build_training_data(
 
         # Add query noise to prevent overfitting on clean queries
         noise_words = ["cheap", "bulk", "supplier", "export", "manufacturer"]
-        rng_noise = np.random.default_rng(seed=hash(base_query) % 2**31)
+        rng_noise = np.random.default_rng(seed=_stable_hash(base_query))
         noisy_query = base_query + " " + rng_noise.choice(noise_words)
 
         candidates = retrieve(noisy_query, k=top_k)
-        # Inject retrieval noise
-        rng = np.random.default_rng()
+        # Inject retrieval noise — deterministically seeded so repeated runs
+        # of the pipeline are reproducible (previously np.random.default_rng()
+        # with no seed, so this noise differed every run).
+        rng = np.random.default_rng(seed=_stable_hash(base_query + "_faissnoise"))
 
         for c in candidates :
             if "faiss_score" in c :
@@ -252,12 +268,14 @@ def build_training_data(
         hard_negatives = _stratified_hard_negatives(
             df_suppliers,
             n=top_k // 2,
-            seed=hash(base_query) % 2**31,
+            seed=_stable_hash(base_query),
         )
         candidates = candidates + hard_negatives
 
-        # Shuffle to remove position bias
-        np.random.shuffle(candidates)
+        # Shuffle to remove position bias — deterministically seeded (was
+        # the bare global np.random.shuffle(), also non-reproducible).
+        rng_shuffle = np.random.default_rng(seed=_stable_hash(base_query + "_shuffle"))
+        rng_shuffle.shuffle(candidates)
 
         if not candidates:
             print(f"    ⚠️ No candidates retrieved, skipping")
@@ -267,7 +285,7 @@ def build_training_data(
 
         for variation in range(queries_per_constraint):
             query_id += 1
-            rng = np.random.default_rng(seed=hash(f"{base_query}_{variation}") % 2**31)
+            rng = np.random.default_rng(seed=_stable_hash(f"{base_query}_{variation}"))
 
             constraint_type = rng.choice(
                 [
@@ -337,6 +355,13 @@ def build_training_data(
                 else:
                     sbert_score = np.random.uniform(0.1, 0.4)
 
+                # Raw (pre-normalization) FAISS cosine similarity — comparable
+                # across queries, unlike faiss_score which is normalized
+                # relative to this query's candidate pool only. Hard negatives
+                # don't come from retrieve(), so default to a low fixed value
+                # rather than 0, which would look like a perfect-opposite match.
+                faiss_raw_score = float(supplier.get("faiss_raw_score", 0.1))
+
                 price = parse_price(get_field(supplier, "price_min") or supplier.get("price", 0))
 
                 # Price features
@@ -355,11 +380,54 @@ def build_training_data(
                     location_match = 0.5
 
                 # Certification
-                s_cert = str(supplier.get("certifications", "")).lower()
+                s_cert_raw = str(supplier.get("certifications", ""))
+                s_cert = s_cert_raw.lower()
                 if req_cert:
                     cert_match = 1.0 if req_cert.lower() in s_cert else 0.0
                 else:
                     cert_match = 0.5
+
+                # Certification count — number of distinct certifications listed
+                # (comma/semicolon/slash separated). A supplier with more
+                # certifications is generally lower-risk/more credible,
+                # independent of whether THIS query's specific cert matched.
+                if s_cert_raw and s_cert.strip() not in ("", "nan", "none"):
+                    cert_count = len([
+                        c for c in re.split(r"[,;/]", s_cert_raw) if c.strip()
+                    ])
+                else:
+                    cert_count = 0
+                cert_count_norm = min(cert_count / 5.0, 1.0)  # cap at 5+ certs
+
+                # Supplier rating — from CANONICAL_COLUMNS "rating" field.
+                # Cold-start: missing rating treated as neutral (0.5 on a
+                # 0-1 scale), same convention as years_normalized below,
+                # rather than penalizing suppliers with no review history.
+                rating_raw = get_field(supplier, "rating", default=None)
+                try:
+                    if rating_raw is None or str(rating_raw).strip().lower() in ("", "nan", "none", "0"):
+                        rating_norm = 0.5
+                    else:
+                        # Ratings are typically on a 0-5 scale in the scraped data
+                        rating_norm = min(max(float(rating_raw) / 5.0, 0.0), 1.0)
+                except (ValueError, TypeError):
+                    rating_norm = 0.5
+
+                # Category overlap — token overlap between the query text and
+                # the supplier's category/product_name fields. Cheap proxy for
+                # "is this supplier even in the right product category" that
+                # doesn't require the category_l1..l4 hierarchy (which isn't
+                # present in CANONICAL_COLUMNS / suppliers_clean.csv).
+                query_tokens = set(base_query.lower().split())
+                supplier_text = " ".join([
+                    str(get_field(supplier, "category", default="")),
+                    str(get_field(supplier, "product_name", default="")),
+                ]).lower()
+                supplier_tokens = set(supplier_text.split())
+                if query_tokens and supplier_tokens:
+                    category_overlap_score = len(query_tokens & supplier_tokens) / len(query_tokens)
+                else:
+                    category_overlap_score = 0.0
 
                 # Years — cold-start fix: a brand-new supplier with no tenure
                 # data should be treated as *neutral* (0.5), not penalized
@@ -380,8 +448,9 @@ def build_training_data(
                 is_manuf = 1.0 if "manufacturer" in biz else 0.0
                 is_trading = 1.0 if "trading" in biz else 0.0
 
-                relevance = compute_relevance(
-                    sbert_score, price_match, location_match, cert_match, years_norm
+                weak_label_score, weak_label = compute_weak_label(
+                    sbert_score, price_match, location_match, cert_match, years_norm,
+                    config=_WEAK_LABEL_CONFIG,
                 )
 
                 # Carry real city name through so fairness.py gets actual location data.
@@ -398,6 +467,7 @@ def build_training_data(
                     "query_text" : base_query,
                     "supplier_idx" : rank,
                     "supplier_name" : supplier.get( "supplier_name" ) or supplier.get( "supplier name", "" ),
+                    "product_name" : get_field( supplier, "product_name", default="" ),
                     "location" : str( raw_location ).strip(),
 
                     "price_match" : price_match,
@@ -416,8 +486,27 @@ def build_training_data(
 
                     "faiss_score" : sbert_score,
                     "faiss_rank" : rank + 1,
+                    "faiss_raw_score" : faiss_raw_score,
 
-                    "relevance" : relevance,
+                    # New candidate-quality features (not yet in FEATURE_COLS —
+                    # add to train_lambdarank.py's FEATURE_COLS deliberately,
+                    # after checking SHAP importance, rather than assuming
+                    # they help).
+                    "supplier_rating" : rating_norm,
+                    "certification_count" : cert_count_norm,
+                    "category_overlap_score" : category_overlap_score,
+
+                    # Continuous weak-label score (pre-bucketing) — kept for
+                    # debugging/reproducibility per the weak-supervision
+                    # methodology (see backend/app/training/weak_label_generator.py).
+                    "weak_label_score" : weak_label_score,
+
+                    # NOTE: column kept as "relevance" for backward
+                    # compatibility with downstream training/eval code
+                    # (train_lambdarank.py, eval/*.py, etc.), but the value
+                    # is now produced by the weak-supervision label
+                    # generator rather than human annotation.
+                    "relevance" : weak_label,
                 } )
 
         print(f"    📊 Generated {len(candidates) * queries_per_constraint} training pairs")
@@ -426,12 +515,53 @@ def build_training_data(
         raise RuntimeError("No training rows generated")
 
     df_out = pd.DataFrame(all_rows)
-    df_out["relevance"] = df_out["relevance"].clip(0, 3).astype(int)
+    df_out["relevance"] = df_out["relevance"].clip(0, 5).astype(int)
+
+    # --- Quantile rebucketing (v3.0 label-skew fix, v3.1 feasibility gate)
+    # compute_weak_label() bucketed each row above against fixed absolute
+    # thresholds from weak_labels.yaml, which assumed weak_label_score is
+    # roughly uniform over [0,1]. It isn't (see weak_label_generator.py's
+    # rebucket_by_quantile docstring for the full diagnosis) — most rows
+    # land well below the absolute label_4/label_5 cutoffs regardless of
+    # how relevant they are *relative to the rest of this dataset*.
+    # Recompute the final "relevance" column from the empirical quantiles
+    # of weak_label_score instead, so labels 4-5 actually get populated.
+    # The original absolute-threshold "relevance" above is kept as
+    # "relevance_absolute_threshold" for comparison/debugging — it is NOT
+    # used for training.
+    #
+    # v3.1: also pass feasibility_count (how many of price_match/
+    # location_match/cert_match are >= 0.5) so rebucket_by_quantile can
+    # cap label tier by constraint satisfaction — fixes the CVR increase
+    # (~0.37 -> ~0.45-0.47, confirmed reproducible) that v3.0's quantile
+    # fix introduced by letting semantically-strong/constraint-violating
+    # rows into labels 4-5.
+    df_out["relevance_absolute_threshold"] = df_out["relevance"]
+    feasibility_count = (
+        (df_out["price_match"] >= 0.5).astype(int) +
+        (df_out["location_match"] >= 0.5).astype(int) +
+        (df_out["cert_match"] >= 0.5).astype(int)
+    )
+    df_out["relevance"], _resolved_cutoffs = rebucket_by_quantile(
+        df_out["weak_label_score"],
+        config=_WEAK_LABEL_CONFIG,
+        feasibility_count=feasibility_count,
+    )
+
+    print("   Relevance label distribution (quantile-rebucketed + feasibility-gated):")
+    print(df_out["relevance"].value_counts().sort_index().to_string())
+    print(f"   Resolved score cutoffs for this run: {_resolved_cutoffs}")
+    print(f"   Feasibility count distribution (rows satisfying N of 3 constraints):")
+    print(feasibility_count.value_counts().sort_index().to_string())
 
     # Tier column for downstream fairness analysis
     df_out["tier"] = df_out["location"].apply(_classify_tier)
 
     df_out.to_csv(OUTPUT_FILE, index=False)
+
+    metadata_path = save_weak_label_metadata(resolved_cutoffs=_resolved_cutoffs)
+    print(f"   Weak-label metadata saved: {metadata_path}")
+
     joint_feasible = (
             (df_out["price_match"] >= 0.5) &
             (df_out["location_match"] >= 0.5) &

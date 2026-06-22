@@ -62,7 +62,18 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+from pathlib import Path
+
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
@@ -99,10 +110,18 @@ INTERNATIONAL_CITIES = {
 }
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 sns.set_style("whitegrid")
@@ -117,10 +136,22 @@ def load_model():
     if not os.path.exists(LGBM_PATH):
         raise FileNotFoundError(
             f"LightGBM model not found: {LGBM_PATH}\n"
-            "Run: python train_lambdarank.py"
+            "Run: python pipeline/run_all.py --train-lambdarank"
         )
     with open(LGBM_PATH, "rb") as f:
-        return pickle.load(f)
+        model = pickle.load(f)
+    # FIX: a real run hit a LightGBM shape error here because LGBM_PATH
+    # held a stale model trained before a FEATURE_COLS change. Checking
+    # num_feature() up front turns that into an actionable error instead
+    # of a raw lightgbm.basic traceback.
+    n_model_features = model.num_feature() if hasattr(model, "num_feature") else None
+    if n_model_features is not None and n_model_features != len(FEATURE_COLS):
+        raise ValueError(
+            f"{LGBM_PATH} was trained with {n_model_features} features, "
+            f"but FEATURE_COLS here has {len(FEATURE_COLS)}. Stale model — "
+            f"retrain via: python pipeline/run_all.py --train-lambdarank"
+        )
+    return model
 
 
 def load_data ( test_frac=0.2, seed=42 ) -> Tuple[pd.DataFrame, pd.DataFrame] :

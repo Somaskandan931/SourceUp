@@ -11,7 +11,15 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-sys.path.insert( 0, os.path.dirname( os.path.dirname( os.path.abspath( __file__ ) ) ) )
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
 # Indian cities by tier
@@ -245,10 +253,20 @@ def add_fairness_weights_to_training () :
             if tier in tier_counts:
                 print(f"      {tier}: {get_weight(tier):.2f}")
 
-        # Save with weights
-        output_path = str( cfg.TRAINING_DATA ).replace( '.csv', '_weighted.csv' )
+        # Save with weights — writes directly to cfg.TRAINING_DATA (in place),
+        # matching run_all.py's inline add_fairness_weights_to_training().
+        #
+        # FIX: this previously wrote to training_data_weighted.csv (a
+        # separate file) while train_lambdarank.py / feature_builder.py only
+        # ever read cfg.TRAINING_DATA directly. Running this script standalone
+        # silently produced a fairness-weighted file that no downstream
+        # training step ever consumed — train_lambdarank.py would train on
+        # the unweighted data with no warning. Writing in place makes the
+        # standalone script and `python pipeline/run_all.py --assign-locations`
+        # produce the identical, actually-used output file.
+        output_path = str( cfg.TRAINING_DATA )
         df.to_csv( output_path, index=False )
-        print( f"\n✅ Saved weighted training data to {output_path}" )
+        print( f"\n✅ Saved weighted training data to {output_path} (in place)" )
 
         # Also save the fairness weights separately
         weights_path = cfg.MODELS_DIR / 'fairness_weights.pkl'

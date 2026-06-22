@@ -1,0 +1,1574 @@
+[
+  {
+    "candidate": {
+      "product": "packaging materials supplier",
+      "max_price": 100000,
+      "moq_budget": 500,
+      "location": "Mumbai",
+      "certification": "",
+      "location_mandatory": false
+    },
+    "fully_matching": 76,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "packaging materials supplier",
+        "max_price": 100000,
+        "moq_budget": 500,
+        "location": "Mumbai",
+        "certification": "",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 76,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Fujian Shenglin Huanghe I & E Trading Co., Ltd",
+          "product_name": "OEM Recycled Disposable 1000 ml- 32oz paper food packaging box for packing many kinds of food in daily life",
+          "price": "0.09 - 0.10",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Shanghai Forests Packaging Group Co. Ltd.",
+          "product_name": "Printed Corrugated Cardboard Paper Fruit Vegetable Packing Packaging Shipping Tray Carton Box",
+          "price": "0.65 - 0.89",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": false
+        },
+        {
+          "rank": 3,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Eco Friendly Carton Cylinder Kraft Paper Round Empty Biodegradable Craft Cardboard Boxes Packaging Tubes",
+          "price": "0.29 - 0.86",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": false
+        },
+        {
+          "rank": 4,
+          "supplier": "Ningbo Rison Houseware Co., Ltd._Packaging",
+          "product_name": "Food Box Kraft Paper Box Lunch Box Disposable Food Containers Takeaway Packaging Box with transparent",
+          "price": "0.03 - 0.04",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": false
+        },
+        {
+          "rank": 5,
+          "supplier": "Good Seller Co., Ltd",
+          "product_name": "Household sealed glass container plastic storage container storage bottle container preservation",
+          "price": "1.24 - 1.26",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Ganzhou Impetus Packaging Products Co.,Limited",
+          "product_name": "Recycled Paper Cylinder Box Glossy Laminating Tube Box",
+          "price": "0.36 - 0.76",
+          "location": "China",
+          "score": 0.0342,
+          "constraint_violated": false
+        },
+        {
+          "rank": 7,
+          "supplier": "ASIA POWERFUL GROUP LIMITED",
+          "product_name": "Case packaging box",
+          "price": "0.30 - 0.50",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": false
+        },
+        {
+          "rank": 8,
+          "supplier": "Liaoning Kunze Industrial Group Co., Ltd",
+          "product_name": "Cardboard gift box packing box rectangular corrugated box packaging lined recyclable paper memory honeycomb",
+          "price": "0.30",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "Forests Packaging Shanghai Group Co. Ltd.",
+          "product_name": "25l Cosmetic custom Boxes corrugated cardboard paper mailer box with strips",
+          "price": "0.43 - 0.89",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": false
+        },
+        {
+          "rank": 10,
+          "supplier": "Emon Packaging Ltd",
+          "product_name": "Custom printing gift box food packaging box cardboard lid and base box for bread",
+          "price": "0.10 - 0.80",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": false
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": -0.0005,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "raw materials supplier",
+      "max_price": 150000,
+      "moq_budget": 100,
+      "location": "Pune",
+      "certification": "",
+      "location_mandatory": false
+    },
+    "fully_matching": 34,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "raw materials supplier",
+        "max_price": 150000,
+        "moq_budget": 100,
+        "location": "Pune",
+        "certification": "",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 34,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Yiwu Sediao Trading Co.",
+          "product_name": "SS-31 high purity grade direct from Manufacturer",
+          "price": "80.00 - 94.00",
+          "location": "China",
+          "score": 0.0493,
+          "constraint_violated": false
+        },
+        {
+          "rank": 2,
+          "supplier": "Qingdao Great New Material Technology Co., Ltd.",
+          "product_name": "Plastic Cherry Tomato Clamshell Plastic Package Bluenerry Packaging Punnet Berry Fruit Container PET Boxes",
+          "price": "0.03",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Trans Global Agric Co.,LTD",
+          "product_name": "Buy New and Used 20ft/ 40ft Large Storage Shipping Containers 40 HC Container Dry and Reefer Type",
+          "price": "800.00",
+          "location": "Thailand",
+          "score": -0.051,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "INTESTA CZ s.r.o.",
+          "product_name": "Hdpe Blue Drum Scrap - Regrind Plastic Bales Hdpe Drum Scrap Blue Drum Regrind Scraps Natural Milk Bottle Regrind High Density",
+          "price": "250.00 - 300.00",
+          "location": "Czech Republic",
+          "score": 0.0405,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Linbing International Trading Hebei Co.,Ltd",
+          "product_name": "99% Min Butyl Acrylate CAS 141-32-2 Packed in 180 Kg/ Drum",
+          "price": "1250.00",
+          "location": "China",
+          "score": 0.0366,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Fluxmat Global B2B Trading",
+          "product_name": "Premium Quality Swine Starter Concentrate",
+          "price": "160.00 - 175.00",
+          "location": "South Africa",
+          "score": 0.0212,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "TM METALURJI SANAYI TICARET LIMITED SIRKETI",
+          "product_name": "Primary aluminum ingot stocked for wholesale buyers",
+          "price": "500.00",
+          "location": "Turkey",
+          "score": 0.0182,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Hebei Daijin Technology Co., Ltd",
+          "product_name": "50kg per bag or customized Purity 46% Urea Fertilizer",
+          "price": "270.00 - 300.00",
+          "location": "China",
+          "score": 0.0147,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "TM METALURJI SANAYI TICARET LIMITED SIRKETI",
+          "product_name": "High quality aluminum ingot sourced from verified producers",
+          "price": "500.00",
+          "location": "Turkey",
+          "score": 0.0117,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Huayi International Industry Group Ltd",
+          "product_name": "Wholesale CNC Machined Parts High Precious OEM Stainless Steel Mechanical Parts CNC Milling Processing Service",
+          "price": "0.89 - 2.09",
+          "location": "China",
+          "score": -0.0006,
+          "constraint_violated": false
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": 0.0018,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "baby products manufacturer",
+      "max_price": 100000,
+      "moq_budget": 200,
+      "location": "Mumbai",
+      "certification": "",
+      "location_mandatory": false
+    },
+    "fully_matching": 32,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "baby products manufacturer",
+        "max_price": 100000,
+        "moq_budget": 200,
+        "location": "Mumbai",
+        "certification": "",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 32,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Wholesale Custom printed baby bodysuit infant neeborn clothing romper",
+          "price": "0.99 - 2.80",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Shenzhen Compoly Electronic Co., Ltd",
+          "product_name": "Humidifier USB intelligent large capacity multicolor household baby hydrating silent spray aromather",
+          "price": "2.07 - 2.57",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Maxspeed Group Co.,Ltd",
+          "product_name": "Baby Bean Bag with CE Certificate",
+          "price": NaN,
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": false
+        },
+        {
+          "rank": 4,
+          "supplier": "Quanzhou Hoosam Manufacturing Limited",
+          "product_name": "High-quality BPA-free silicone baby teether",
+          "price": "0.40 - 0.80",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": false
+        },
+        {
+          "rank": 5,
+          "supplier": "Polywell Group Co. Ltd",
+          "product_name": "Wholesale Felt diaper bag m and baby mommy bag travel bag",
+          "price": "2.00 - 4.00",
+          "location": "China",
+          "score": 0.0342,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Manufacturers Bulk wholesale kids clothing custom logo printed designer baby clothes summer outfit",
+          "price": "1.44 - 4.40",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Quanzhou Luckoi Garment Co. Ltd",
+          "product_name": "MOTHER NEST Easy Folding Baby Travel Comfort baby carrier",
+          "price": "10.60 - 12.00",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": false
+        },
+        {
+          "rank": 8,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Baby clothes wholesale custom logo printing designer baby romper 100% cotton white baby bodysuit",
+          "price": "1.90 - 3.80",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "Dongguan Yanhan Craft&Gift Co.,Ltd.",
+          "product_name": "Silicone Baby Teether Safety Grade Wholesale Toy",
+          "price": "0.70",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Polywell Supply Management Co., Ltd",
+          "product_name": "Good Quality Double Bottle Warmers Temperature Constant Infant Baby Food Heater Baby Bottle Warmer Bottle",
+          "price": "4.99 - 5.81",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": -0.0005,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "office supplies wholesaler",
+      "max_price": 50000,
+      "moq_budget": 100,
+      "location": "Delhi",
+      "certification": "",
+      "location_mandatory": false
+    },
+    "fully_matching": 30,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "office supplies wholesaler",
+        "max_price": 50000,
+        "moq_budget": 100,
+        "location": "Delhi",
+        "certification": "",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 30,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Good Seller Co., Ltd(3)",
+          "product_name": "Wholesale Watercolor Flower Printing Creative Art 22 Holes Drawing Student Pen bag",
+          "price": "1.14 - 1.29",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Hangzhou Forests Packing Group Co., Ltd.",
+          "product_name": "Wholesale White pink Cardboard Paper Mailing Clothing Cosmetic Corrugated Shipping Packaging Box",
+          "price": "0.23 - 0.95",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Leo Global Logistics Public Company Limited",
+          "product_name": "High Quality OCC Waste Paper /OCC 11 and OCC 12 / Old Corrugated Carton Waste Paper Scraps Available For Sale At Low Price",
+          "price": "9000.00",
+          "location": "Thailand",
+          "score": -0.0513,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Good Seller Co., Ltd",
+          "product_name": "Wholesale Ruler/Calculator Ruler, Customized Logo Available, Suitable for Promotional Gifts",
+          "price": "0.92 - 0.95",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Good Seller Co., Ltd(3)",
+          "product_name": "Wholesale Stand Up Zipper Brown Kraft Paper Resealable Packaging Pouches Food Storage Bags",
+          "price": "0.11 - 0.15",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Jinjiang Baojia Supply Chain Management Co., Ltd",
+          "product_name": "A5 Business loose leaf notebook customized enterprise office notepad notebook gift box installed",
+          "price": "5.80",
+          "location": "China",
+          "score": 0.0342,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Gaea Enterprises (Shanghai) Co. Ltd",
+          "product_name": "OPP packing tape 45mic*48mm*20m for Office",
+          "price": "0.11 - 0.19",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Hoosam Manufacturing Industrial Limited",
+          "product_name": "Mermaid Pencil Bag School Sequin Kids Pencil Case Supplies Stationery Office Supplies Bags Women Gir",
+          "price": "1.15 - 1.50",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": false
+        },
+        {
+          "rank": 9,
+          "supplier": "Fujian U Know Supply Management Co., Ltd",
+          "product_name": "Pen cases, Felt pen bag environmental protection simple stationery bag pencil box, can print logo",
+          "price": "0.58 - 0.67",
+          "location": "China",
+          "score": 0.0123,
+          "constraint_violated": false
+        },
+        {
+          "rank": 10,
+          "supplier": "Good Seller Co., Ltd(3)",
+          "product_name": "Wholesale Customized Logo Luxury Cardboard Collapsible Folding Rigid Packaging Gift Paper & Media Boxes",
+          "price": "1.30 - 1.50",
+          "location": "China",
+          "score": 0.0123,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": -0.0005,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "food packaging suppliers",
+      "max_price": 50000,
+      "moq_budget": 500,
+      "location": "Chennai",
+      "certification": "ISO",
+      "location_mandatory": false
+    },
+    "fully_matching": 16,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "food packaging suppliers",
+        "max_price": 50000,
+        "moq_budget": 500,
+        "location": "Chennai",
+        "certification": "ISO",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 16,
+        "location_matches": 0,
+        "filters_applied": [
+          "certifications",
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Dalian Huiyou Packaging Co., Ltd.",
+          "product_name": "Fast Food Container Custom Food Grade Burger And Chips Take Away Paper Boxes Fired Chicken Food Packaging",
+          "price": "0.04 - 0.09",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": false
+        },
+        {
+          "rank": 2,
+          "supplier": "Tag Raiser Wooden Products (Dalian) Co., Ltd",
+          "product_name": "Safe Food Grade Kraft Paper Food Container Take Away Lunch Packing Boxes for Carry out Party Resturant",
+          "price": "0.10",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Shenzhen Mellerio Package Co.,Limited",
+          "product_name": "High quality factory price custom 4 side sealed bag for food packaging",
+          "price": "0.05 - 0.10",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": false
+        },
+        {
+          "rank": 4,
+          "supplier": "Dalian Huiyou Packaging Co., Ltd.",
+          "product_name": "Box Free Sample Takeaway Packaging Food Box Takeout Black Fried Chicken Take Out Paper Lunch Box Food Container",
+          "price": "0.04 - 0.09",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": false
+        },
+        {
+          "rank": 5,
+          "supplier": "Huizhou Zhonglifa Industrial Co. Ltd",
+          "product_name": "Net bags of vegetables and firewood onion and potato bags effectively package and print products",
+          "price": "0.04",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": false
+        },
+        {
+          "rank": 6,
+          "supplier": "Fujian Shenglin Huanghe I & E Trading Co., Ltd",
+          "product_name": "OEM Recycled Disposable 1000 ml- 32oz paper food packaging box for packing many kinds of food in daily life",
+          "price": "0.09 - 0.10",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Ningbo Rison Houseware Co., Ltd._Packaging",
+          "product_name": "Food Box Kraft Paper Box Lunch Box Disposable Food Containers Takeaway Packaging Box with transparent",
+          "price": "0.03 - 0.04",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Liaoning Kunze Industrial Group Co., Ltd",
+          "product_name": "Fruit Packaging Boxes Gift Box Packaging Custom Printed Corrugated Cardboard Cherry Fruit Packaging Boxes",
+          "price": "0.75",
+          "location": "China",
+          "score": 0.0333,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "YongKang ZhuoTong Houseware Factory",
+          "product_name": "BPA free custom 7 days weekly pill box organizer",
+          "price": "1.65 - 2.00",
+          "location": "China",
+          "score": 0.0333,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Shenzhen Mellerio Package Co.,Limited",
+          "product_name": "Wholesame Factory Price high quality laminated paper and plastic bag for food",
+          "price": "0.05 - 0.20",
+          "location": "China",
+          "score": 0.0333,
+          "constraint_violated": false
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0017,
+        "price_ratio": 0.0012,
+        "location_match": -0.0039,
+        "cert_match": 0.075,
+        "faiss_score": 0.006
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "apparel manufacturer",
+      "max_price": 200000,
+      "moq_budget": 500,
+      "location": "Surat",
+      "certification": "ISO",
+      "location_mandatory": false
+    },
+    "fully_matching": 1,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "apparel manufacturer",
+        "max_price": 200000,
+        "moq_budget": 500,
+        "location": "Surat",
+        "certification": "ISO",
+        "location_mandatory": false
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 1,
+        "location_matches": 0,
+        "filters_applied": [
+          "certifications",
+          "moq_affordability"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "SHANDONG FUKUN NEW MATERIALS CO., LTD.",
+          "product_name": "Factory Wholesale handle garment shopping bag",
+          "price": "0.07 - 0.25",
+          "location": "China",
+          "score": 0.0622,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Shanghai Easun Group",
+          "product_name": "Manufacture price casual polo t shirt oversized t shirt blue 5 pack t shirts men custom t shirts egyptian",
+          "price": "3.80 - 4.50",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Garment Supplier Custom Fashion Brand Logo Swing PVC Embossing Hang Tag 400G Tags For Clothes",
+          "price": "0.20 - 0.65",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Wuxi Huacan Garment Accessories Co., Ltd",
+          "product_name": "Low MOQ High Quality Custom Logo 3d Silicone Heat Press Label Clothing Rubber Silicone Thermal Transfer",
+          "price": "0.08 - 0.58",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Baoding Junyang Import and Export Trade Co., Ltd",
+          "product_name": "OEM Clothing Manufacturers 100% cotton Heavy Weight Custom Printed Brand Logo Plus Size Casual Men's",
+          "price": "3.80",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Manufacturer Garment Accessories Clothing Satin Tag Custom Clothes Woven Labels With Brand Logo Hang Tag",
+          "price": "0.20 - 0.65",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Yaw Liamy Enterprise Co. Ltd",
+          "product_name": "N400DxN400D Plain Nylon Fabric, with Foil Laminated",
+          "price": NaN,
+          "location": "Taiwan",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Custom Garment Organic Cotton Recyclable Fabric Clothing Inside Size Tags Silk Screen Printing Neck Woven",
+          "price": "0.08 - 0.35",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "iGift Uniform Limited",
+          "product_name": "Fashion Designer Baggy Custom Logo Printing Plain 200-500 Gsm Essential Hoodies Men Organic Cotton Hoodie",
+          "price": "8.90 - 10.90",
+          "location": "Macau SAR",
+          "score": 0.0364,
+          "constraint_violated": false
+        },
+        {
+          "rank": 10,
+          "supplier": "Zhejiang Hotop Technology Co.,Ltd",
+          "product_name": "Custom Logo cute designer cosmetic organiser makeup bag",
+          "price": "1.32",
+          "location": "China",
+          "score": 0.0333,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0017,
+        "price_ratio": -0.0004,
+        "location_match": -0.0039,
+        "cert_match": 0.0459,
+        "faiss_score": 0.0389
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "cotton textile manufacturer",
+      "max_price": 200000,
+      "moq_budget": 500,
+      "location": "Tiruppur",
+      "certification": "ISO",
+      "location_mandatory": true
+    },
+    "fully_matching": 0,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "cotton textile manufacturer",
+        "max_price": 200000,
+        "moq_budget": 500,
+        "location": "Tiruppur",
+        "certification": "ISO",
+        "location_mandatory": true
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 0,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability",
+          "certifications",
+          "location"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "SHANDONG FUKUN NEW MATERIALS CO., LTD.",
+          "product_name": "Factory Wholesale handle garment shopping bag",
+          "price": "0.07 - 0.25",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Jiangxi Yiwei Textile Group Co., Ltd.",
+          "product_name": "RPET diamond dobby with dope dyed black yarns for bags,luggage fabric",
+          "price": "2.62",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Shanghai UPG International Industry & Trade Group Co., Ltd.",
+          "product_name": "LQ-TB Nylon, PET, PLA, Non-woven Fabrics Material Flat Pyramid Tea Bag Packaging Machine",
+          "price": "9500.00 - 15000.00",
+          "location": "China",
+          "score": -0.0513,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Manufacturer Designer First Class Quality Cotton Custom Logo Printing Custom T Shirt Printing Plain Oversized",
+          "price": "1.56 - 4.80",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Custom Garment Organic Cotton Recyclable Fabric Clothing Inside Size Tags Silk Screen Printing Neck Woven",
+          "price": "0.08 - 0.35",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Shanghai Delta Import & Export Co., Ltd.",
+          "product_name": "Colorful 100% pp spunbonded nonwoven fabric spunbond for bags and so on",
+          "price": "1.92",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Union Textiles of China (UDCTEX) Ltd",
+          "product_name": "120gsm polyester Mesh Fabric, Warp Knitting,for Garment and bags 150CM",
+          "price": "0.80 - 0.90",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Wholesale 240 Grams 100% Cotton T Shirt Heavyweight Unisex Custom Logo Designer Embroidery Screen Print",
+          "price": "1.73 - 3.71",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "Yaw Liamy Enterprise Co. Ltd",
+          "product_name": "N400DxN400D Plain Nylon Fabric, with Foil Laminated",
+          "price": NaN,
+          "location": "Taiwan",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Baoding Junyang Import and Export Trade Co., Ltd",
+          "product_name": "OEM Clothing Manufacturers 100% cotton Heavy Weight Custom Printed Brand Logo Plus Size Casual Men's",
+          "price": "3.80",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0017,
+        "price_ratio": 0.0012,
+        "location_match": -0.0039,
+        "cert_match": 0.0728,
+        "faiss_score": 0.0082
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "cotton textile manufacturer",
+      "max_price": 200000,
+      "moq_budget": 500,
+      "location": "Surat",
+      "certification": "ISO",
+      "location_mandatory": true
+    },
+    "fully_matching": 0,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "cotton textile manufacturer",
+        "max_price": 200000,
+        "moq_budget": 500,
+        "location": "Surat",
+        "certification": "ISO",
+        "location_mandatory": true
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 0,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability",
+          "certifications",
+          "location"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "SHANDONG FUKUN NEW MATERIALS CO., LTD.",
+          "product_name": "Factory Wholesale handle garment shopping bag",
+          "price": "0.07 - 0.25",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Jiangxi Yiwei Textile Group Co., Ltd.",
+          "product_name": "RPET diamond dobby with dope dyed black yarns for bags,luggage fabric",
+          "price": "2.62",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Shanghai UPG International Industry & Trade Group Co., Ltd.",
+          "product_name": "LQ-TB Nylon, PET, PLA, Non-woven Fabrics Material Flat Pyramid Tea Bag Packaging Machine",
+          "price": "9500.00 - 15000.00",
+          "location": "China",
+          "score": -0.0513,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Manufacturer Designer First Class Quality Cotton Custom Logo Printing Custom T Shirt Printing Plain Oversized",
+          "price": "1.56 - 4.80",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "ZhangZhou Taki Industry And Trade Co.,ltd",
+          "product_name": "Custom Garment Organic Cotton Recyclable Fabric Clothing Inside Size Tags Silk Screen Printing Neck Woven",
+          "price": "0.08 - 0.35",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Shanghai Delta Import & Export Co., Ltd.",
+          "product_name": "Colorful 100% pp spunbonded nonwoven fabric spunbond for bags and so on",
+          "price": "1.92",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "Union Textiles of China (UDCTEX) Ltd",
+          "product_name": "120gsm polyester Mesh Fabric, Warp Knitting,for Garment and bags 150CM",
+          "price": "0.80 - 0.90",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Number One Industrial Co. Ltd Dept 2",
+          "product_name": "Wholesale 240 Grams 100% Cotton T Shirt Heavyweight Unisex Custom Logo Designer Embroidery Screen Print",
+          "price": "1.73 - 3.71",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "Yaw Liamy Enterprise Co. Ltd",
+          "product_name": "N400DxN400D Plain Nylon Fabric, with Foil Laminated",
+          "price": NaN,
+          "location": "Taiwan",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Baoding Junyang Import and Export Trade Co., Ltd",
+          "product_name": "OEM Clothing Manufacturers 100% cotton Heavy Weight Custom Printed Brand Logo Plus Size Casual Men's",
+          "price": "3.80",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0017,
+        "price_ratio": 0.0012,
+        "location_match": -0.0039,
+        "cert_match": 0.0728,
+        "faiss_score": 0.0082
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "electronics components supplier",
+      "max_price": 100000,
+      "moq_budget": 200,
+      "location": "Bangalore",
+      "certification": "ISO",
+      "location_mandatory": true
+    },
+    "fully_matching": 0,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "electronics components supplier",
+        "max_price": 100000,
+        "moq_budget": 200,
+        "location": "Bangalore",
+        "certification": "ISO",
+        "location_mandatory": true
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 0,
+        "location_matches": 0,
+        "filters_applied": [
+          "location",
+          "moq_affordability",
+          "certifications"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "shenzhen gaofuheng electric technology co., ltd.",
+          "product_name": "Cheap Self-production and self-marketing professional Single-sided/Double-sided/Multilayer Custom PCB",
+          "price": "0.10 - 10.00",
+          "location": "China",
+          "score": 0.0622,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Guangzhou Lanxinwang Technology Co.,ltd",
+          "product_name": "Custom Black Anodized Aluminum Cnc Electronic Enclosure Box Instrument Enclosure Laser Cutting Bending",
+          "price": "2.30 - 8.90",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Shenzhen Starwell Technology Co., Ltd",
+          "product_name": "OBC 22kw charger Battery car charger 800v on board battery charger hot sale",
+          "price": "4600.00 - 4800.00",
+          "location": "China",
+          "score": -0.0513,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "TOPA Technology Limited",
+          "product_name": "Wholesale 48v 100ah lifepo4 battery lifepo4 200ah 48v lithium batteries 200ah battery packs 48v 100ah",
+          "price": "850.00 - 921.00",
+          "location": "China",
+          "score": 0.0357,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Hi-Net Technology Co., Ltd",
+          "product_name": "480W power supply",
+          "price": "40.00 - 60.00",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Shenzhen Shengji Mains Co. Ltd",
+          "product_name": "Customized PCBA assembly 12V3A power supply, double layer pcb for Router",
+          "price": "2.80 - 3.20",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "shenzhen gaofuheng electric technology co., ltd.",
+          "product_name": "2024 Self-production and self-marketing professional Single-sided/Double-sided/Multilayer Custom PCB",
+          "price": "0.10 - 10.00",
+          "location": "China",
+          "score": 0.06,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Dongguan Bosi Hardware Electronic Co. Ltd",
+          "product_name": "Metal Sheet Metal Fabrication Spring Steel Clip Metal Belt Spring Clip",
+          "price": "0.00 - 0.19",
+          "location": "China",
+          "score": 0.0514,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "Shenzhen Esino Technology Ltd.",
+          "product_name": "Battery Swapping Cabinet Fast Charging Battery Cabinet Electric Motorcycle/Moped/Scooter/Tricycle",
+          "price": "1888.00 - 2000.00",
+          "location": "China",
+          "score": 0.0357,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Hi-Net Technology Co., Ltd",
+          "product_name": "270W Industrial Power Supplies",
+          "price": "25.00 - 30.00",
+          "location": "China",
+          "score": 0.0472,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0017,
+        "price_ratio": -0.0004,
+        "location_match": -0.0039,
+        "cert_match": 0.0459,
+        "faiss_score": 0.0389
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "automotive parts manufacturer",
+      "max_price": 300000,
+      "moq_budget": 100,
+      "location": "Chennai",
+      "certification": "",
+      "location_mandatory": true
+    },
+    "fully_matching": 0,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "automotive parts manufacturer",
+        "max_price": 300000,
+        "moq_budget": 100,
+        "location": "Chennai",
+        "certification": "",
+        "location_mandatory": true
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 0,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability",
+          "location"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Dongguan Jinsheng Precision Technology Co.,LTD",
+          "product_name": "Auto Parts Customized Plastic Products Custom Injection Molding Service Plastic Part Spare Automotive",
+          "price": "8.00",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Wenzhou Ivspeed Co.,Ltd",
+          "product_name": "High Quality High Efficiency Filter P551856 Oil-water Separator Filter Element",
+          "price": "4.00 - 7.00",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "Liebty Machinery Technology (Hangzhou) Co., Ltd.",
+          "product_name": "Wholesale High Performance F2000 Tipper 6X4 Dump Truck 25 Ton Dump Truck Tipper",
+          "price": "18000.00 - 20000.00",
+          "location": "China",
+          "score": -0.0513,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Dongguan Taihe Hardware Products Co.,Ltd",
+          "product_name": "OEM Custom Metal Cabinet Metal Parts Box",
+          "price": "2.30 - 3.56",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Cangzhou MyBong Ecommerce Co. Ltd",
+          "product_name": "1000KW Made in China Hot Sale Alternator Engine Generator Set with Air Filter Genset For Factory & Farms",
+          "price": "34584.00",
+          "location": "China",
+          "score": -0.0482,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Huayi International Industry Group Ltd",
+          "product_name": "Factory Supplier Custom Auto Parts Aluminum CNC Milling Machined Parts",
+          "price": "0.10 - 1.00",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "M&E Metalworks Ltd",
+          "product_name": "OEM manufacturing CNC machining services cnc parts aluminum motorcycle CNC milling parts",
+          "price": "1.00 - 1.80",
+          "location": "China",
+          "score": 0.0381,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Weser Qingdao Limited",
+          "product_name": "Mechanical parts CNC auto machine parts/aluminum alloy casting",
+          "price": "0.05 - 1.00",
+          "location": "China",
+          "score": 0.0342,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "M&E Metalworks Ltd",
+          "product_name": "Custom High Precision CNC Milling Lathed Parts Mini CNC Swiss Machined Parts for Automotive",
+          "price": "1.00 - 1.80",
+          "location": "China",
+          "score": 0.0188,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "Sawawada Corp.",
+          "product_name": "Investment Casting Beverage Machinery Part OEM Metal Parts",
+          "price": "1.00 - 5.00",
+          "location": "Taiwan",
+          "score": 0.0188,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": -0.0005,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  },
+  {
+    "candidate": {
+      "product": "industrial tools supplier",
+      "max_price": 150000,
+      "moq_budget": 50,
+      "location": "Mumbai",
+      "certification": "",
+      "location_mandatory": true
+    },
+    "fully_matching": 0,
+    "location_matches": 0,
+    "final_results": 10,
+    "trace": {
+      "query": {
+        "product": "industrial tools supplier",
+        "max_price": 150000,
+        "moq_budget": 50,
+        "location": "Mumbai",
+        "certification": "",
+        "location_mandatory": true
+      },
+      "stage_1_retrieval": {
+        "retrieved": 100
+      },
+      "stage_2_cross_encoder": {
+        "reranked": 100
+      },
+      "stage_3_constraints": {
+        "after_constraints": 100,
+        "fully_matching": 0,
+        "location_matches": 0,
+        "filters_applied": [
+          "moq_affordability",
+          "location"
+        ]
+      },
+      "stage_4_ranking": {
+        "ranking_method": "lightgbm"
+      },
+      "stage_5_diversity": {
+        "final_results": 10
+      },
+      "top_results": [
+        {
+          "rank": 1,
+          "supplier": "Good Seller Co., Ltd  (2)",
+          "product_name": "Industrial Grade Impact Wrench and Screwdriver Power Tools for Efficient Fastening and Disassembly",
+          "price": "24.35 - 24.37",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 2,
+          "supplier": "Dongguan Huateng Metal Products Co., Ltd.",
+          "product_name": "Custom Cnc Manufacturing Metal Parts Brass Aluminum Stainless Steel Aviation Automotive Cnc Parts Machining Service",
+          "price": "0.80 - 1.30",
+          "location": "China",
+          "score": -0.0534,
+          "constraint_violated": true
+        },
+        {
+          "rank": 3,
+          "supplier": "M&E Metalworks Ltd",
+          "product_name": "Customized Aluminum CNC Milled Part CNC Milling Turning Parts",
+          "price": "1.00 - 1.80",
+          "location": "China",
+          "score": 0.0469,
+          "constraint_violated": true
+        },
+        {
+          "rank": 4,
+          "supplier": "Huayi International Industry Group Ltd",
+          "product_name": "Factory Supplier Custom Auto Parts Aluminum CNC Milling Machined Parts",
+          "price": "0.10 - 1.00",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 5,
+          "supplier": "Huayi International Industry Group Ltd",
+          "product_name": "Precision Aluminium CNC Machining Parts CNC Machining Milling Turning Services for Machinery Engine Parts Cnc Machining Services",
+          "price": "1.19 - 2.09",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 6,
+          "supplier": "Ace Industry Co. Ltd",
+          "product_name": "CNC machining parts/laser cutting part/turning part/CNC milling E40137",
+          "price": "0.90",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 7,
+          "supplier": "M&E Metalworks Ltd",
+          "product_name": "OEM manufacturing CNC machining services cnc parts aluminum motorcycle CNC milling parts",
+          "price": "1.00 - 1.80",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 8,
+          "supplier": "Huayi International Industry Group Ltd",
+          "product_name": "5 axis cnc milling lathe machining parts/steel milling turning parts cnc machining parts",
+          "price": "0.01 - 1.00",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 9,
+          "supplier": "M&E Casting Parts Ltd",
+          "product_name": "OEM High-Precision CNC Machined Parts Mechanical Part Aluminum Metal 5-axis CNC Machining CNC Milling",
+          "price": "1.00 - 1.50",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        },
+        {
+          "rank": 10,
+          "supplier": "M&E Metalworks Ltd",
+          "product_name": "Custom High Precision CNC Milling Lathed Parts Mini CNC Swiss Machined Parts for Automotive",
+          "price": "1.00 - 1.80",
+          "location": "China",
+          "score": 0.0242,
+          "constraint_violated": true
+        }
+      ],
+      "top_supplier_feature_contribution": {
+        "price_match": 0.0022,
+        "price_ratio": -0.0005,
+        "location_match": -0.0029,
+        "cert_match": -0.0016,
+        "faiss_score": 0.0698
+      }
+    }
+  }
+]

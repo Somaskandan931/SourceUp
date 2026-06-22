@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
 
 try:
     import xgboost as xgb
@@ -29,10 +30,19 @@ except ImportError:
     sys.exit(1)
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    "years_normalized", "is_manufacturer",
+    # FIX: restored — the rule-based baseline computed further down in this
+    # same file uses years_normalized and is_manufacturer directly, so
+    # dropping them from FEATURE_COLS gave the baseline two inputs the
+    # model never saw. See the matching fix/comment in run_all.py.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 XGB_PARAMS = {
@@ -163,16 +173,16 @@ def main():
     train_ndcg = ndcg_at_k(y_train, pred_train, df_train["query_id"])
     val_ndcg = ndcg_at_k(y_val, pred_val, df_val["query_id"])
 
-    # Rule-based baseline
-    rule_pred = (
-        df_val["price_match"] * 0.35 +
-        (1 - df_val["price_distance"]) * 0.10 +
-        df_val["location_match"] * 0.20 +
-        df_val["cert_match"] * 0.20 +
-        df_val["years_normalized"] * 0.05 +
-        df_val["is_manufacturer"] * 0.05 +
-        df_val["faiss_score"] * 0.05
-    ).values
+    # Rule-based baseline. FIX: previously a local 7-term formula
+    # (price_match 0.35 / (1-price_distance) 0.10 / location_match 0.20 /
+    # cert_match 0.20 / years_normalized 0.05 / is_manufacturer 0.05 /
+    # faiss_score 0.05) that didn't match any of the other 6 scripts in
+    # this repo that report a "Rule-Based" number. Now delegates to
+    # rule_baseline.score_rule_based(), the single canonical formula
+    # (see rule_baseline.py docstring). This will print a different
+    # rule_ndcg than previous runs of this script — expected, the old
+    # number wasn't comparable to ablation.py/baselines.py anyway.
+    rule_pred = _canonical_rule_scorer(df_val)
     rule_ndcg = ndcg_at_k(y_val, rule_pred, df_val["query_id"])
 
     print("\n" + "=" * 65)
@@ -192,10 +202,22 @@ def main():
         pickle.dump({"model": model, "feature_cols": FEATURE_COLS}, f)
     print(f"\n💾 XGBRanker saved: {xgb_path}")
 
-    # Also save to LGBM path for backward compatibility
-    with open(str(cfg.LGBM_MODEL), "wb") as f:
-        pickle.dump(model, f)
-    print(f"💾 Also saved to: {cfg.LGBM_MODEL} (compatibility)")
+    # FIX: previously also wrote this XGBRanker object to cfg.LGBM_MODEL
+    # ("for backward compatibility"). That path is the SAME file
+    # train_lambdarank.py writes its LightGBM Booster to, and the same file
+    # backend/app/models/ranker.py (production inference) and 6 eval
+    # scripts (stability.py, fairness.py, sensitivity.py, baselines.py,
+    # ablation.py) load expecting a LightGBM object. Writing an XGBRanker
+    # there silently corrupted whichever of those ran afterward — they'd
+    # either crash or, worse, silently evaluate the wrong model type
+    # without any error (both libraries expose .predict(X), so the call
+    # often "succeeds" with wrong numbers). xgb_ranker.pkl above is the
+    # correct, unambiguous home for this model; nothing should read
+    # XGBRanker from cfg.LGBM_MODEL anymore (see also shap_analysis.py,
+    # which has been repointed at xgb_ranker.pkl for the same reason).
+    print(f"   (NOT written to {cfg.LGBM_MODEL} — that path is reserved "
+          f"for train_lambdarank.py's LightGBM model. Use xgb_ranker.pkl "
+          f"to load this XGBRanker model elsewhere.)")
 
     return model
 

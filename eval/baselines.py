@@ -39,8 +39,21 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+from pathlib import Path
+
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
+from rule_baseline import score_rule_based_independent as _independent_rule_scorer
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
 LGBM_PATH  = str(cfg.LGBM_MODEL)
@@ -78,10 +91,18 @@ sns.set_style("whitegrid")
 plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 # ============================================================================
@@ -253,23 +274,41 @@ def score_sourceup(df_test: pd.DataFrame) -> np.ndarray:
 
 
 def score_rule_based_default(df: pd.DataFrame) -> np.ndarray:
-    """B3 / Fallback rule-based scorer matching ranker.py — NaN-safe."""
-    import numpy as _np
-    df = df.copy()
-    for _c in ["price_match", "price_distance", "location_match",
-               "cert_match", "years_normalized", "is_manufacturer", "faiss_score"]:
-        if _c in df.columns:
-            df[_c] = df[_c].fillna(0).replace([float('inf'), float('-inf')], 0)
-    scores = (
-        df["price_match"]          * 0.35 +
-        (1 - df["price_distance"]) * 0.10 +
-        df["location_match"]       * 0.20 +
-        df["cert_match"]           * 0.20 +
-        df["years_normalized"]     * 0.05 +
-        df["is_manufacturer"]      * 0.05 +
-        df["faiss_score"]          * 0.05
-    ).values
-    return _np.nan_to_num(scores, nan=0.0, posinf=1.0, neginf=0.0)
+    """B3 / Fallback rule-based scorer — NaN-safe.
+
+    FIX (this version): delegates to rule_baseline.score_rule_based(),
+    the single canonical formula now shared by every script in this repo
+    (ablation.py, run_all.py, sensitivity.py, stability.py,
+    train_ranker.py, ranker.py's production fallback, case_study.py).
+    Previously this function and six other call sites each defined their
+    own weights, so "Rule-Based Baseline NDCG@10" meant a different
+    formula in different scripts despite being printed under the same
+    name. See rule_baseline.py for the full inventory and the rationale
+    for these particular weights, and check_label_baseline_overlap.py
+    before citing B3 vs. S1 as an independent baseline comparison.
+    """
+    return _canonical_rule_scorer(df)
+
+
+def score_rule_based_independent_default(df: pd.DataFrame) -> np.ndarray:
+    """B3b — label-independent rule-based scorer.
+
+    Added alongside (not instead of) B3 once check_label_baseline_overlap.py
+    quantified that B3 shares 0.845 cosine similarity with the weak-label
+    formula it's scored against (95% of B3's weight on the same three
+    constraint signals that gate top relevance labels). Delegates to
+    rule_baseline.score_rule_based_independent(), built from
+    category_overlap_score/price_distance/certification_count/
+    is_manufacturer — none of which feed
+    weak_label_generator.compute_weak_label(). (supplier_rating was a
+    5th candidate column, dropped after check_independent_baseline_inputs()
+    found it permanently constant in the real data.) See that function's
+    docstring for the full column-by-column independence rationale, and
+    run rule_baseline.check_independent_baseline_inputs() against your
+    real ranking_data.csv before citing B3b results — it warns if any
+    input column is missing or constant in your actual data.
+    """
+    return _independent_rule_scorer(df)
 
 
 def score_xgboost_lambdamart(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndarray:
@@ -489,6 +528,7 @@ _PALETTE = {
     "B1: BM25":                 "#d73027",
     "B2: SBERT Cosine":         "#f46d43",
     "B3: Rule-Based":           "#fdae61",
+    "B3b: Rule-Based (independent)": "#fee090",
     "B4: Random":               "#cccccc",
     "A1: XGBoost LambdaMART":   "#4dac26",
     "A2: LightGBM Regression":  "#762a83",
@@ -675,6 +715,18 @@ def run_baselines():
     print(f"   NDCG@10 = {r['NDCG@10']:.4f}")
 
     # ------------------------------------------------------------------
+    # B3b: Rule-Based Ranker, label-independent (see rule_baseline.py's
+    # KNOWN LIMITATION section — B3 shares 0.845 cosine similarity with
+    # the weak-label formula it's scored against; B3b does not)
+    # ------------------------------------------------------------------
+    print("▶ B3b: Rule-Based Ranker (label-independent)")
+    pred_b3b = score_rule_based_independent_default(df_test)
+    r = full_eval("B3b: Rule-Based (independent)", y_test, pred_b3b, df_test, query_test)
+    ndcg_dists["B3b: Rule-Based (independent)"] = r.pop("_ndcg_per_query")
+    results.append(r)
+    print(f"   NDCG@10 = {r['NDCG@10']:.4f}")
+
+    # ------------------------------------------------------------------
     # B4: Random
     # ------------------------------------------------------------------
     print("▶ B4: Random Ranking (lower bound)")
@@ -729,7 +781,8 @@ def run_baselines():
     print("\n📈 Statistical Significance (Wilcoxon signed-rank, SourceUp > Baseline):")
     sourceup_ndcg = ndcg_dists["S1: SourceUp Full"]
     sig_rows = []
-    for bname in ["B1: BM25", "B2: SBERT Cosine", "B3: Rule-Based", "B4: Random",
+    for bname in ["B1: BM25", "B2: SBERT Cosine", "B3: Rule-Based",
+                  "B3b: Rule-Based (independent)", "B4: Random",
                   "A1: XGBoost LambdaMART", "A2: LightGBM Regression"]:
         sig_rows.append(wilcoxon_vs_sourceup(sourceup_ndcg, ndcg_dists[bname], bname))
     sig_df = pd.DataFrame(sig_rows)

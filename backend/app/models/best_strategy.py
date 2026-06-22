@@ -10,18 +10,39 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 
-sys.path.insert( 0, str( Path( __file__ ).resolve().parents[3] ) )
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
 
 import lightgbm as lgb
 from sklearn.metrics import ndcg_score
 from sklearn.model_selection import GroupShuffleSplit
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: faiss_rank removed — measured correlation with relevance label
+    # was 0.025 (near-zero) on the full training set, and it is a lossy,
+    # redundant derivative of faiss_score (rank position vs. raw similarity
+    # magnitude). See dataset_diagnostic.py Experiment 4.
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 
@@ -85,20 +106,16 @@ def train_best_strategy () :
     )
 
     # Rule-based scores
-    def rule_score ( df ) :
-        return (
-                df["price_match"].values * 0.35 +
-                (1 - df["price_distance"].values) * 0.10 +
-                df["location_match"].values * 0.20 +
-                df["cert_match"].values * 0.20 +
-                df["years_normalized"].values * 0.05 +
-                df["is_manufacturer"].values * 0.05 +
-                df["faiss_score"].values * 0.05
-        )
-
-    # Find optimal ensemble weight
+    # FIX: previously a local formula that used price_distance, years_normalized,
+    # and is_manufacturer — none of which are in this file's FEATURE_COLS (they
+    # were removed from the 6-feature production set). That caused a KeyError /
+    # silent 0.0 substitution at runtime, and even when the columns existed it
+    # produced a different formula than every other script in the repo that
+    # reports a "Rule-Based" number. Now delegates to the single canonical
+    # scorer from rule_baseline.py, matching ablation.py, baselines.py, and
+    # ranker.py's fallback path.
+    rule_pred = _canonical_rule_scorer(df_val)
     ml_pred = lgb_model.predict( df_val[FEATURE_COLS].values.astype( np.float32 ) )
-    rule_pred = rule_score( df_val )
 
     best_ndcg = 0
     best_ml_weight = 0.65

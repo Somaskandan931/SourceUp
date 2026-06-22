@@ -77,6 +77,12 @@ class _Config:
     def TRAINING_DATA(self)   -> Path: return self.TRAINING_DIR / "ranking_data.csv"
 
     @property
+    def WEAK_LABEL_CONFIG(self)   -> Path: return self.ROOT / "configs" / "weak_labels.yaml"
+
+    @property
+    def WEAK_LABEL_METADATA(self) -> Path: return self.TRAINING_DIR / "weak_label_metadata.json"
+
+    @property
     def FAISS_INDEX(self)     -> Path: return self.EMBEDDINGS_DIR / "suppliers.faiss"
 
     @property
@@ -91,7 +97,17 @@ class _Config:
     def LGBM_MODEL(self)      -> Path: return self.MODELS_DIR / "ranker_lightgbm.pkl"
 
     @property
-    def XGB_MODEL(self)       -> Path: return self.MODELS_DIR / "ranker_xgboost.pkl"
+    def LGBM_MODEL_STANDARD(self) -> Path: return self.MODELS_DIR / "ranker_lightgbm_standard.pkl"
+
+    @property
+    def XGB_MODEL(self)       -> Path:
+        # FIX: this used to point at "ranker_xgboost.pkl", a filename nothing
+        # ever wrote to. train_ranker.py / run_all.py both save XGBRanker to
+        # "xgb_ranker.pkl" (see their own FIX comments on this exact
+        # collision), and shap_analysis.py already bypasses this property
+        # entirely and hardcodes that correct path for that reason. Repointed
+        # here so cfg.XGB_MODEL is actually usable instead of silently wrong.
+        return self.MODELS_DIR / "xgb_ranker.pkl"
 
     # ── Scraper ──────────────────────────────────────────────────────
     @property

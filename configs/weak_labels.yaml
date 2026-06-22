@@ -1,0 +1,83 @@
+# configs/weak_labels.yaml
+# ---------------------------------------------------------------------------
+# Configurable weights for the SourceUp weak-supervision label generator.
+# Edit these values to re-weight the heuristic without touching any code.
+# Weights are expected to sum to ~1.0 (not strictly enforced).
+# ---------------------------------------------------------------------------
+
+weak_labels:
+  semantic_similarity: 0.25
+  price_match: 0.20
+  location_match: 0.20
+  certification_match: 0.20
+  years_on_platform: 0.10
+  hidden_factor: 0.05
+
+# Score -> ordinal weak-label thresholds (0-5 scale)
+# Widened from the original 0-3 scale to give LambdaRank finer-grained
+# relevance buckets to optimize NDCG against (more graded judgments per
+# query group reduces tied-relevance pairs in the pairwise loss).
+# Thresholds are evenly spaced over the same [0,1] weak_label_score range
+# that produced the old 0-3 buckets.
+#
+# NOTE (v3.0): these absolute thresholds are still used by
+# compute_weak_label() per-row (kept for backward compatibility / the
+# fallback config in weak_label_generator.py), but the *final* relevance
+# column written to ranking_data.csv now comes from rebucket_by_quantile()
+# below, using quantile_thresholds instead. Diagnostic finding: the
+# weighted weak_label_score rarely exceeds ~0.55 even for the
+# best-available candidates per query (most component signals are sparse
+# binary 0/0.5/1 values, and faiss_score averages ~0.25), so these fixed
+# absolute cutoffs left labels 4-5 almost empty (83%+ of rows in {1,2},
+# only ~1.1% in {4,5} — see eval/dataset_diagnostic.py).
+thresholds:
+  label_5: 0.85
+  label_4: 0.70
+  label_3: 0.55
+  label_2: 0.40
+  label_1: 0.25
+
+# Quantile-based recalibration (v3.0 fix) — defines each label as a
+# percentile of THIS dataset's actual weak_label_score distribution,
+# rather than an absolute number much of the distribution can't reach.
+# Values are cumulative percentiles (score >= Nth percentile -> that label
+# or higher). Tune these if the resulting label distribution still looks
+# off after a rerun — they directly control class balance.
+quantile_thresholds:
+  label_5: 98   # top 2% of (query, supplier) pairs
+  label_4: 90   # next 8%
+  label_3: 70   # next 20%
+  label_2: 35   # next 35%
+  label_1: 10   # next 25%
+  # bottom 10% -> label 0
+
+# Feasibility gate (v3.1 fix) — minimum number of {price_match,
+# location_match, cert_match} that must be >= 0.5 for a row to KEEP a
+# given quantile-assigned label. A row scoring in the top 2% of
+# weak_label_score but satisfying 0 constraints gets downgraded one tier
+# at a time until it reaches a label whose floor it meets.
+#
+# WHY: v3.0's quantile fix solved the label-skew problem (labels 4-5 went
+# from ~1.1% to ~10% of rows) but reproducibly raised the Constraint
+# Violation Rate from ~0.37 to ~0.45-0.47 across eval/ablation.py and
+# eval/baselines.py — confirmed via two seeded reruns, not sampling noise.
+# Root cause: faiss_score has far more spread than the sparse binary
+# location_match/cert_match signals, so semantically-excellent-but-
+# constraint-violating rows could land in the top quantiles. This gate
+# re-couples "high relevance label" with "actually satisfies constraints"
+# without touching the quantile_thresholds class balance above.
+#
+# Tune these if CVR is still too high after a rerun (raise the floors)
+# or if label 5 becomes too sparse again (lower them).
+feasibility_floor:
+  label_5: 2   # top label now requires >=2 of 3 constraints satisfied
+  label_4: 2
+  label_3: 1
+  label_2: 0
+  label_1: 0
+
+# Noise parameters used to simulate the imperfection of a heuristic signal
+noise:
+  hidden_factor_std: 0.30
+  random_perturbation_prob: 0.15
+  random_perturbation_std: 0.15

@@ -19,7 +19,15 @@ from typing import Dict, List, Tuple
 
 warnings.filterwarnings("ignore")
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
 try:
@@ -38,10 +46,18 @@ LABEL_COL   = "relevance"
 QUERY_COL   = "query_id"
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 LGBM_PARAMS = {
@@ -65,7 +81,7 @@ LGBM_PARAMS = {
 # Noise injection
 # ---------------------------------------------------------------------------
 
-def inject_noise(labels: pd.Series, noise_rate: float, max_label: int = 3,
+def inject_noise(labels: pd.Series, noise_rate: float, max_label: int = 5,
                  random_state: int = 42) -> pd.Series:
     """
     Flip a fraction of training labels to a random different value.
@@ -73,7 +89,9 @@ def inject_noise(labels: pd.Series, noise_rate: float, max_label: int = 3,
     Args:
         labels:       clean integer relevance labels
         noise_rate:   fraction in [0, 1] of labels to corrupt
-        max_label:    maximum label value (inclusive)
+        max_label:    maximum label value (inclusive). Default 5 matches the
+                       weak-label scale produced by feature_builder.py /
+                       weak_label_generator.py (relevance in {0..5}).
         random_state: for reproducibility
 
     Returns:
@@ -165,7 +183,7 @@ def run_label_noise_analysis(
 
     df = pd.read_csv(TRAIN_DATA)
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
-    df[LABEL_COL] = df[LABEL_COL].round().clip(0, 3).astype(int)
+    df[LABEL_COL] = df[LABEL_COL].round().clip(0, 5).astype(int)
 
     # Clean train/test split (no noise yet)
     train_df, test_df = split_by_query(df)

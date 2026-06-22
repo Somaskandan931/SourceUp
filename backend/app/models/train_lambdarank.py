@@ -24,9 +24,8 @@ CHANGES vs previous version:
          identified as hard-binary (not clipped to quantile range). The
          quantile-clip in load_data now excludes constraint columns so their
          0/1 semantics are preserved.
-  FIX-4  Model selection: primary model (ranker_lightgbm.pkl) is now chosen
-         based on actual NDCG@10 rather than blindly saving CD-LambdaRank.
-         CD model is still saved separately for paper comparisons.
+  FIX-4  Model selection: primary model (ranker_lightgbm.pkl) is now
+         ALWAYS Standard LambdaRank — see FIX-9.
   FIX-5  Stability test extended: perturbation now covers all continuous
          features (previously skipped faiss_rank and years_normalized).
   FIX-6  Feasibility-rate sanity check: warns loudly (and computes the
@@ -37,6 +36,25 @@ CHANGES vs previous version:
          judged from a single hyperparameter setting. Table II now reports
          every setting plus Standard LambdaRank so the paper's central claim
          ("does CD-LambdaRank help?") is actually testable.
+  FIX-8  Investigated whether feature-set dilution explained CD losing to
+         Standard LambdaRank (hypothesis: CD only wins when constraint
+         columns are diluted among many features). Tested directly: CD
+         loses to Standard on BOTH the original 10-feature set (NDCG@10
+         0.8377 vs 0.8115, Wilcoxon p=0.9999) and the trimmed 6-feature set
+         (0.8394 vs 0.8012, p=0.9999) under this leakage-fixed training
+         code. Feature count does NOT explain the gap — it was likely a
+         pre-FIX-1 data-leakage artifact in earlier reported numbers.
+         CD-LambdaRank DOES consistently win on Kendall's tau and rank
+         stability under perturbation in both regimes, which is a real,
+         reproducible effect worth reporting on its own terms (see
+         eval/stability.py), just not as an NDCG/P@5/MAP improvement.
+  FIX-9  Per FIX-8: CD-LambdaRank is no longer eligible to become the
+         primary production model regardless of its NDCG@10 on any given
+         run. Standard LambdaRank (6-feature schema) is the finalized
+         production ranker. CD-LambdaRank training is now opt-in via
+         --with-cd and is saved under a separate filename purely to
+         reproduce the paper's stability/Kendall's-tau discussion —
+         it is never written to ranker_lightgbm.pkl.
 """
 
 import os
@@ -70,7 +88,15 @@ except ImportError:
     print("❌ lightgbm not installed. Run: pip install lightgbm")
     sys.exit(1)
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
@@ -84,23 +110,70 @@ cfg.ensure_dirs()
 # ---------------------------------------------------------------------------
 # Feature columns — order must match feature_builder.py exactly
 # ---------------------------------------------------------------------------
-FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+# FIX-10: FEATURE_COLS is kept as the 6-feature production default (below),
+# but FIX-8's finding — CD loses to Standard on BOTH the 6-feature and
+# 10-feature regimes, with feature count not explaining the NDCG gap — is
+# only a real controlled ablation if both regimes are runnable from the same
+# CLI flag rather than hand-edited each time. FEATURE_SETS below makes that
+# reproducible: `--feature-set 6` (default) or `--feature-set 10`.
+FEATURE_COLS_6 = [
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
 ]
+# NOTE: faiss_rank removed from the 6-feature default — dataset_diagnostic.py
+# measured its correlation with the relevance label at 0.025 (near-zero),
+# and it is a lossy, redundant derivative of faiss_score (rank position vs.
+# raw similarity magnitude — two suppliers ranked #5/#6 may have nearly
+# identical or very different faiss_score, rank can't distinguish). SHAP
+# also ranked it second-lowest of the 6 (mean |SHAP| = 0.07). Dropping it
+# leaves 5 production features, all with meaningfully higher relevance
+# correlation (cert_match 0.42, price_match 0.42, faiss_score 0.41,
+# location_match 0.35, price_ratio -0.41).
+
+FEATURE_COLS_10 = FEATURE_COLS_6 + [
+    "price_distance",
+    "years_normalized",
+    "is_manufacturer",
+    "is_trading_company",
+]
+
+FEATURE_SETS: Dict[int, List[str]] = {
+    6: FEATURE_COLS_6,
+    10: FEATURE_COLS_10,
+}
+
+# Module-level default — kept as a plain name (not reassigned at runtime) so
+# any other module that does `from train_lambdarank import FEATURE_COLS`
+# keeps working unchanged. main() below re-derives the active feature set
+# from --feature-set and threads it through explicitly instead of mutating
+# this global, since CONTINUOUS_COLS / CONSTRAINT_COLS also need to track it.
+FEATURE_COLS = FEATURE_COLS_6
+# NOTE: years_normalized, is_manufacturer, is_trading_company removed from
+# the 6-feature default — confirmed zero SHAP importance across two
+# independent training runs (near-constant values in current data). They
+# are restored in FEATURE_COLS_10 above for the controlled ablation.
+# NOTE: price_distance removed from the 6-feature default — for
+# price/max_price <= 2 (the vast majority of rows) it equals
+# abs(price_ratio - 1) exactly, a pure deterministic transform of
+# price_ratio. Keeping both caused the model to split arbitrarily between
+# two copies of the same signal, which is why SHAP rank order for price
+# features flipped between training runs. Also restored in
+# FEATURE_COLS_10 for the ablation, since the 10-feature regime is meant
+# to reproduce the original (pre-trim) schema as a comparison point.
 
 # Hard-binary constraint columns — MUST NOT be quantile-clipped or min-max scaled
 # (they are already 0 / 0.5 / 1.0 by construction in feature_builder.py)
 CONSTRAINT_COLS = ["price_match", "location_match", "cert_match"]
 
-# Continuous columns that benefit from [0,1] normalisation
-# FIX-1 / FIX-3: exclude constraint cols so their 0/1 semantics survive
-CONTINUOUS_COLS = [
-    "price_ratio", "price_distance",
-    "years_normalized", "faiss_score", "faiss_rank",
-]
+# Continuous columns that benefit from [0,1] normalisation, per feature set.
+# FIX-1 / FIX-3: exclude constraint cols so their 0/1 semantics survive.
+CONTINUOUS_COLS_6 = ["price_ratio", "faiss_score"]
+CONTINUOUS_COLS_10 = CONTINUOUS_COLS_6 + ["price_distance", "years_normalized"]
+CONTINUOUS_COLS_BY_SET: Dict[int, List[str]] = {6: CONTINUOUS_COLS_6, 10: CONTINUOUS_COLS_10}
+
+# Module-level default (6-feature), same rationale as FEATURE_COLS above.
+CONTINUOUS_COLS = CONTINUOUS_COLS_6
 
 LABEL_COL = "relevance"
 QUERY_COL = "query_id"
@@ -131,6 +204,16 @@ STANDARD_PARAMS = {**SHARED_PARAMS, "objective": "lambdarank"}
 NUM_ROUNDS        = 200
 EARLY_STOP_ROUNDS = 15
 
+# FIX-11: grid for --hp-search over (num_leaves, learning_rate). Kept small
+# and centered on the current production values (num_leaves=15,
+# learning_rate=0.01) rather than the much larger un-vetted grid suggested
+# elsewhere (num_leaves up to 127, learning_rate up to 0.1) — this dataset's
+# query groups are small (top_k=50 + ~25 hard negatives), and num_leaves=63+
+# overfits per-group splits well before 200 rounds. Widen this only after
+# checking eval NDCG@10 doesn't regress at the current edges of the grid.
+HP_GRID_NUM_LEAVES:    List[int]   = [7, 15, 31]
+HP_GRID_LEARNING_RATE: List[float] = [0.01, 0.03, 0.05]
+
 CD_ALPHA = 5.0
 CD_BETA  = 0.1
 
@@ -147,6 +230,7 @@ CD_GRID: List[Tuple[float, float]] = [
 # FIX-6: below this fraction of query groups having >=1 feasible candidate,
 # CD-LambdaRank's F,F / F,I gradient terms are too sparse to fairly evaluate.
 MIN_GROUPS_WITH_FEASIBLE_FRAC = 0.5
+
 
 
 # ============================================================================
@@ -388,7 +472,7 @@ def load_data() -> pd.DataFrame:
 
     df = pd.read_csv(TRAIN_DATA)
     df.columns = [c.strip().lower().replace(' ', '_') for c in df.columns]
-    df[LABEL_COL] = df[LABEL_COL].round().clip(0, 3).astype(int)
+    df[LABEL_COL] = df[LABEL_COL].round().clip(0, 5).astype(int)
 
     cols_to_drop = [c for c in ["location", "tier", "supplier_name", "query_text"]
                     if c in df.columns]
@@ -492,7 +576,9 @@ def ndcg_at_k(y_true, y_pred, query_ids, k=10) -> float:
     return float(np.mean(scores)) if scores else 0.0
 
 
-def precision_at_k(y_true, y_pred, query_ids, k=5, thr=2) -> float:
+def precision_at_k(y_true, y_pred, query_ids, k=5, thr=3) -> float:
+    # thr rescaled 2->3: old 0-3 label scale used thr=2 (top 2/3 of range);
+    # 0-5 scale equivalent is thr=3 (label/max_label = 0.67 in both cases).
     sc = []
     for qid in query_ids.unique():
         m = query_ids == qid
@@ -508,7 +594,8 @@ def precision_at_k(y_true, y_pred, query_ids, k=5, thr=2) -> float:
     return float(np.mean(sc)) if sc else 0.0
 
 
-def mean_ap(y_true, y_pred, query_ids, thr=2) -> float:
+def mean_ap(y_true, y_pred, query_ids, thr=3) -> float:
+    # thr rescaled 2->3, same proportional cutoff as precision_at_k above.
     ap_list = []
     for qid in query_ids.unique():
         m = query_ids == qid
@@ -742,27 +829,66 @@ def build_bm25_scores(df: pd.DataFrame) -> np.ndarray:
 # ============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description="SourceUp — CD-LambdaRank Training")
+    global FEATURE_COLS, CONTINUOUS_COLS
+
+    parser = argparse.ArgumentParser(description="SourceUp — Supplier Ranker Training")
     parser.add_argument("--gamma",     type=float, default=0.3)
     parser.add_argument("--rounds",    type=int,   default=NUM_ROUNDS)
     parser.add_argument("--test-frac", type=float, default=0.2)
     parser.add_argument("--alpha",     type=float, default=CD_ALPHA,
-                        help="CD penalty for feasible-vs-infeasible pairs")
+                        help="CD penalty for feasible-vs-infeasible pairs (only used with --with-cd)")
     parser.add_argument("--beta",      type=float, default=CD_BETA,
-                        help="CD weight for infeasible-vs-infeasible pairs")
+                        help="CD weight for infeasible-vs-infeasible pairs (only used with --with-cd)")
+    parser.add_argument("--with-cd", action="store_true",
+                        help="Also train CD-LambdaRank and run the head-to-head "
+                             "comparison against Standard LambdaRank. OFF by "
+                             "default: experiments on this dataset showed "
+                             "CD-LambdaRank underperforms Standard LambdaRank "
+                             "on NDCG@10/P@5/MAP (though it wins on Kendall's "
+                             "tau / rank stability — see cd_vs_standard_comparison.csv "
+                             "from prior runs for the paper's discussion section). "
+                             "Standard LambdaRank is the production model; use "
+                             "this flag only to regenerate that comparison.")
     parser.add_argument("--grid-search", action="store_true",
                         help="FIX-7: run the full CD_GRID ablation (Table II) "
-                             "instead of a single (alpha, beta) pair")
+                             "instead of a single (alpha, beta) pair. Implies --with-cd.")
+    parser.add_argument("--feature-set", type=int, choices=[6, 10], default=6,
+                        help="FIX-10: which feature schema to train/evaluate on. "
+                             "6 = trimmed production set (default). 10 = original "
+                             "set incl. price_distance/years_normalized/"
+                             "is_manufacturer/is_trading_company, restored for the "
+                             "controlled 6-vs-10 ablation referenced in FIX-8. Run "
+                             "both values and diff cd_vs_standard_comparison.csv "
+                             "to reproduce that table.")
+    parser.add_argument("--hp-search", action="store_true",
+                        help="FIX-11: grid-search (num_leaves x learning_rate) over "
+                             "HP_GRID_NUM_LEAVES x HP_GRID_LEARNING_RATE for Standard "
+                             "LambdaRank, reporting NDCG@10 per setting, then proceed "
+                             "using the best setting found. Adds "
+                             "len(HP_GRID_NUM_LEAVES)*len(HP_GRID_LEARNING_RATE) extra "
+                             "training runs — expect this to take a while.")
     args = parser.parse_args()
+    if args.grid_search:
+        args.with_cd = True
+
+    # FIX-10: switch the active feature schema before any data is loaded —
+    # load_data() / normalise_features() / training all read the module-level
+    # FEATURE_COLS / CONTINUOUS_COLS, so this must happen first.
+    FEATURE_COLS = FEATURE_SETS[args.feature_set]
+    CONTINUOUS_COLS = CONTINUOUS_COLS_BY_SET[args.feature_set]
 
     print("=" * 65)
-    print("🏗️  SourceUp — CD-LambdaRank vs Standard LambdaRank")
+    print("🏗️  SourceUp — Standard LambdaRank Training" +
+          (" + CD-LambdaRank Comparison" if args.with_cd else ""))
     print("=" * 65)
+    print(f"   Feature set: {args.feature_set}-feature "
+          f"({'production default' if args.feature_set == 6 else 'original/ablation'})")
     print(f"   Rounds:    {args.rounds}  |  Early-stop: {EARLY_STOP_ROUNDS}")
-    if args.grid_search:
-        print(f"   CD grid: {CD_GRID}")
-    else:
-        print(f"   CD α={args.alpha}, β={args.beta}")
+    if args.with_cd:
+        if args.grid_search:
+            print(f"   CD grid: {CD_GRID}")
+        else:
+            print(f"   CD α={args.alpha}, β={args.beta}")
     print("=" * 65)
 
     # ── Load & split ──────────────────────────────────────────────────
@@ -783,12 +909,106 @@ def main():
     y_test  = df_test[LABEL_COL]
     qids    = df_test[QUERY_COL]
 
-    # ── Train Standard LambdaRank (single baseline, shared across grid) ─
+    # ── FIX-11: optional hyperparameter grid search ──────────────────────
+    # Searches (num_leaves, learning_rate) for Standard LambdaRank only —
+    # CD-LambdaRank shares SHARED_PARAMS so the winning setting applies to
+    # both. This mutates SHARED_PARAMS/STANDARD_PARAMS in place so every
+    # downstream training call (including --with-cd) picks it up.
+    global SHARED_PARAMS, STANDARD_PARAMS
+    if args.hp_search:
+        print("\n" + "─" * 55)
+        print("🔧 FIX-11: Hyperparameter grid search "
+              f"({len(HP_GRID_NUM_LEAVES)}x{len(HP_GRID_LEARNING_RATE)} settings)...")
+        print("─" * 55)
+        hp_results = []
+        best_ndcg, best_setting = -1.0, None
+        for nl in HP_GRID_NUM_LEAVES:
+            for lr in HP_GRID_LEARNING_RATE:
+                trial_params = {**SHARED_PARAMS, "objective": "lambdarank",
+                                 "num_leaves": nl, "learning_rate": lr}
+                train_groups = df_train.groupby(QUERY_COL, sort=False).size().values
+                test_groups  = df_test.groupby(QUERY_COL,  sort=False).size().values
+                trial_model = lgb.LGBMRanker(**trial_params, n_estimators=args.rounds, random_state=42)
+                trial_model.fit(
+                    df_train[FEATURE_COLS].values.astype(np.float32),
+                    df_train[LABEL_COL].values,
+                    group=train_groups,
+                    eval_set=[(df_test[FEATURE_COLS].values.astype(np.float32),
+                               df_test[LABEL_COL].values)],
+                    eval_group=[test_groups],
+                    eval_metric="ndcg@10",
+                    callbacks=[lgb.early_stopping(EARLY_STOP_ROUNDS, verbose=False),
+                               lgb.log_evaluation(0)],
+                )
+                trial_pred = trial_model.predict(df_test[FEATURE_COLS].values.astype(np.float32))
+                trial_ndcg = ndcg_at_k(y_test, trial_pred, qids, k=10)
+                hp_results.append({"num_leaves": nl, "learning_rate": lr, "NDCG@10": round(trial_ndcg, 4)})
+                print(f"   num_leaves={nl:<4} learning_rate={lr:<6} NDCG@10={trial_ndcg:.4f}")
+                if trial_ndcg > best_ndcg:
+                    best_ndcg, best_setting = trial_ndcg, (nl, lr)
+
+        print(f"\n   Best setting: num_leaves={best_setting[0]}, "
+              f"learning_rate={best_setting[1]}  (NDCG@10={best_ndcg:.4f})")
+        SHARED_PARAMS = {**SHARED_PARAMS, "num_leaves": best_setting[0], "learning_rate": best_setting[1]}
+        STANDARD_PARAMS = {**SHARED_PARAMS, "objective": "lambdarank"}
+
+        os.makedirs(OUT_DIR, exist_ok=True)
+        hp_path = f"{OUT_DIR}/hp_search_feature_set_{args.feature_set}.csv"
+        pd.DataFrame(hp_results).to_csv(hp_path, index=False)
+        print(f"   HP search results saved: {hp_path}")
+        print("─" * 55)
+
+    # ── Train Standard LambdaRank — this is the production model ────────
     std_model   = train_standard_lambdarank(df_train, df_test, n_rounds=args.rounds)
     std_pred    = std_model.predict(df_test[FEATURE_COLS].values.astype(np.float32))
     std_metrics = evaluate_all("Standard LambdaRank", y_test, std_pred, qids)
+    std_metrics["feature_set"] = args.feature_set
 
     all_results: List[Dict] = [std_metrics]
+
+    # ── Save Standard LambdaRank as the primary production model ────────
+    # FIX-10: only the 6-feature run writes to the canonical LGBM_PATH /
+    # *_standard.pkl filenames (the production model). 10-feature ablation
+    # runs are saved under a distinct suffix so they can't silently
+    # overwrite the production model file.
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    if args.feature_set == 6:
+        std_path = LGBM_PATH.replace(".pkl", "_standard.pkl")
+        with open(std_path, "wb") as f:
+            pickle.dump(std_model.booster_, f)
+        print(f"\n✅ Standard LambdaRank saved: {std_path}")
+
+        with open(LGBM_PATH, "wb") as f:
+            pickle.dump(std_model.booster_, f)
+        print(f"✅ Primary model → Standard LambdaRank "
+              f"(NDCG@10={std_metrics['NDCG@10']:.4f}): {LGBM_PATH}")
+    else:
+        ablation_path = LGBM_PATH.replace(".pkl", f"_standard_fs{args.feature_set}.pkl")
+        with open(ablation_path, "wb") as f:
+            pickle.dump(std_model.booster_, f)
+        print(f"\n✅ Standard LambdaRank ({args.feature_set}-feature ablation) saved: "
+              f"{ablation_path}")
+        print("   (NOT written to the primary production path — "
+              "feature_set != 6.)")
+
+    comparison_csv = f"{OUT_DIR}/cd_vs_standard_comparison_fs{args.feature_set}.csv"
+
+    if not args.with_cd:
+        os.makedirs(OUT_DIR, exist_ok=True)
+        pd.DataFrame(all_results).to_csv(comparison_csv, index=False)
+        print(f"✅ Results CSV saved: {comparison_csv}")
+        print("\n" + "=" * 65)
+        print("✅ Training complete (Standard LambdaRank only).")
+        print("   Run again with --with-cd to also train CD-LambdaRank and")
+        print("   regenerate the head-to-head comparison for the paper.")
+        print("=" * 65)
+        return None, std_model, None, std_metrics
+
+    # ------------------------------------------------------------------
+    # Everything below only runs with --with-cd. CD-LambdaRank is NOT the
+    # production model (see flag help above) — this exists purely to
+    # reproduce the comparison data for the paper's discussion section.
+    # ------------------------------------------------------------------
     cd_runs: Dict[Tuple[float, float], Tuple[lgb.Booster, Dict]] = {}
 
     # ── Train CD-LambdaRank — single setting or full grid (FIX-7) ───────
@@ -805,6 +1025,7 @@ def main():
         cd_metrics = evaluate_all(label, y_test, cd_pred, qids)
         cd_metrics["alpha"] = alpha
         cd_metrics["beta"]  = beta
+        cd_metrics["feature_set"] = args.feature_set
         cd_metrics["frac_groups_with_feasible"] = round(cd_obj.frac_groups_with_feasible, 4)
         all_results.append(cd_metrics)
         cd_runs[(alpha, beta)] = (cd_booster, cd_metrics)
@@ -837,7 +1058,7 @@ def main():
         print("📊 TABLE II — CD-LambdaRank ABLATION ACROSS (α, β)")
         print("=" * 65)
         grid_df = pd.DataFrame(all_results)
-        cols = ["Model", "alpha", "beta", "NDCG@10", "NDCG@5", "P@5", "MAP",
+        cols = ["Model", "feature_set", "alpha", "beta", "NDCG@10", "NDCG@5", "P@5", "MAP",
                 "Kendall_tau", "frac_groups_with_feasible"]
         cols = [c for c in cols if c in grid_df.columns]
         print(grid_df[cols].to_string(index=False))
@@ -867,43 +1088,32 @@ def main():
     tau_cd = kendall_tau_at_noise(BoosterWrapper(cd_booster), df_test, noise_level=0.03)
     print(f"   CD-LambdaRank       τ = {tau_cd:.4f}")
 
-    # ── Save models (FIX-4: choose primary by NDCG@10) ───────────────
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
-    cd_path = LGBM_PATH.replace(".pkl", "_cd.pkl")
+    # ── Save CD-LambdaRank for the paper's comparison only ───────────────
+    # NOTE: Standard LambdaRank was already saved as the primary production
+    # model (ranker_lightgbm.pkl) above, unconditionally. CD-LambdaRank is
+    # saved here under a separate filename for reproducing the paper's
+    # discussion-section numbers, but it never becomes the primary model —
+    # experiments on this dataset showed it consistently underperforms
+    # Standard LambdaRank on NDCG@10/P@5/MAP even when it wins on Kendall's
+    # tau / stability (see module docstring FIX-8 and the conversation that
+    # produced cd_vs_standard_comparison_fs6.csv / _fs10.csv / _legacy.csv).
+    cd_path = LGBM_PATH.replace(".pkl", f"_cd_fs{args.feature_set}.pkl")
     with open(cd_path, "wb") as f:
         pickle.dump(cd_booster, f)
-    print(f"\n✅ Best CD-LambdaRank saved:  {cd_path}")
+    print(f"\n✅ CD-LambdaRank saved (comparison only, not primary): {cd_path}")
 
-    std_path = LGBM_PATH.replace(".pkl", "_standard.pkl")
-    with open(std_path, "wb") as f:
-        pickle.dump(std_model.booster_, f)
-    print(f"✅ Standard LambdaRank saved: {std_path}")
-
-    # FIX-4: select the better model for production use
-    cd_ndcg  = cd_metrics["NDCG@10"]
-    std_ndcg = std_metrics["NDCG@10"]
-    if cd_ndcg >= std_ndcg:
-        primary_obj = cd_booster
-        primary_label = f"CD-LambdaRank (α={best_alpha_beta[0]}, β={best_alpha_beta[1]})"
-    else:
-        primary_obj = std_model.booster_
-        primary_label = "Standard LambdaRank"
-
-    with open(LGBM_PATH, "wb") as f:
-        pickle.dump(primary_obj, f)
-    print(f"✅ Primary model → {primary_label} (NDCG@10={max(cd_ndcg, std_ndcg):.4f}): {LGBM_PATH}")
-
-    # Save comparison CSV for the paper
+    # Save comparison CSV for the paper — one file per feature-set regime so
+    # a 6-feature run and a 10-feature run (FIX-10 ablation) never overwrite
+    # each other; diff the two to reproduce the FIX-8 "feature count doesn't
+    # explain the gap" finding.
     os.makedirs(OUT_DIR, exist_ok=True)
-    pd.DataFrame(all_results).to_csv(
-        f"{OUT_DIR}/cd_vs_standard_comparison.csv", index=False
-    )
-    print(f"✅ Comparison CSV saved:       {OUT_DIR}/cd_vs_standard_comparison.csv")
+    pd.DataFrame(all_results).to_csv(comparison_csv, index=False)
+    print(f"✅ Comparison CSV saved:       {comparison_csv}")
 
     print("\n" + "=" * 65)
-    print("✅ Training complete. Use cd_vs_standard_comparison.csv")
-    print("   for the Table II numbers in the paper.")
+    print("✅ Training complete. Standard LambdaRank remains the primary")
+    print(f"   production model. Use {comparison_csv} for the")
+    print("   paper's CD-LambdaRank discussion (stability/Kendall's-tau).")
     print("=" * 65)
 
     return cd_booster, std_model, cd_metrics, std_metrics

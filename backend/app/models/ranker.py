@@ -1,220 +1,332 @@
 """
-Ranker Module — SourceUp
---------------------------
-Hybrid ML + rule-based scoring with ensemble support.
+SourceUp — Production Ranker (inference only)
+-----------------------------------------------
+Exposes:
+  get_ranker()              → singleton SupplierRanker instance
+  extract_features_batch()  → build feature DataFrame from supplier dicts
+  apply_mmr()                → Maximal Marginal Relevance diversification
+  FEATURE_COLS               → canonical 6-feature list
 """
 
-import os
-import sys
-import logging
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
-))))
-
 import pickle
+import logging
+import warnings
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Literal
-from config import cfg
-from backend.app.utils.fields import get_field
+from pathlib import Path
+from functools import lru_cache
+from typing import List, Dict, Any, Optional
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+warnings.filterwarnings("ignore")
 logger = logging.getLogger(__name__)
 
-try:
-    import lightgbm as lgb
-    LGBM_AVAILABLE = True
-except ImportError:
-    LGBM_AVAILABLE = False
+import sys
+def _find_project_root(marker: str = "config.py") -> Path:
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
 
+sys.path.insert(0, str(_find_project_root()))
+from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
+
+# ── Canonical feature list (must match train_lambdarank.py) ──────────────────
+# NOTE: faiss_rank intentionally excluded — correlation with relevance was
+# 0.025 (near-zero), redundant with faiss_score (rank is a lossy derivative
+# of the raw similarity score). Still computed below for the rule-based
+# fallback scorer and MMR, just not selected for the ML model.
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match",
+    "price_ratio",
+    "location_match",
+    "cert_match",
+    "faiss_score",
 ]
 
 
+# ── Price parsing ──────────────────────────────────────────────────────────────
+
 def parse_price(v) -> float:
-    if v is None or (isinstance(v, float) and v != v):
+    """
+    Parse a price value that may be a plain number, a numeric string, a range
+    string like '0.08 - 0.20' (takes the lower bound), or missing/NaN.
+    Mirrors features/feature_builder.py's parse_price() so training-time and
+    inference-time price parsing stay consistent.
+    """
+    if v is None or (isinstance(v, float) and np.isnan(v)):
         return 0.0
     try:
         s = str(v).strip()
         return float(s.split("-")[0].strip()) if "-" in s else float(s)
-    except Exception:
+    except (ValueError, TypeError):
         return 0.0
 
 
-def extract_features(supplier: dict, query: dict) -> dict:
-    # Use get_field to correctly resolve underscore-normalised keys
-    raw_price = get_field(supplier, "price_min") or get_field(supplier, "price", default=0)
-    supplier_price = parse_price(raw_price)
+# ── Feature extraction ────────────────────────────────────────────────────────
 
-    qmax = query.get("max_price")
-    if qmax is not None:
-        qmax = float(qmax)
-        price_match = 1.0 if supplier_price > 0 and supplier_price <= qmax else 0.0
-        price_ratio = min(supplier_price / qmax, 2.0) if qmax > 0 else 1.0
-        price_distance = abs(supplier_price - qmax) / qmax if qmax > 0 else 0.0
-    else:
-        price_match, price_ratio, price_distance = 0.5, 1.0, 0.0
+def extract_features_batch(
+    suppliers: List[Dict[str, Any]],
+    query: Dict[str, Any],
+) -> pd.DataFrame:
+    """
+    Build a feature DataFrame for a list of supplier dicts + a query dict.
+    Returns a DataFrame with exactly FEATURE_COLS columns (float32).
+    Missing source fields default to neutral / zero-contribution values.
+    """
+    records = []
+    query_location = str(query.get("location", "")).lower().strip()
+    query_cert     = str(query.get("certification", "")).lower().strip()
+    max_price      = parse_price(query.get("max_price", 0))
 
-    s_loc = str(get_field(supplier, "supplier_location") or get_field(supplier, "location", default="")).lower().strip()
-    q_loc = str(query.get("location") or "").lower().strip()
+    for s in suppliers:
+        price     = parse_price(s.get("price"))
+        location  = str(s.get("supplier_location") or s.get("location", "")).lower().strip()
+        certs_raw = s.get("certifications") or s.get("certification") or ""
+        certs     = str(certs_raw).lower()
 
-    if not s_loc or not q_loc:
-        location_match = 0.5
-    elif q_loc in s_loc or s_loc in q_loc:
-        location_match = 1.0
-    else:
-        location_match = 0.0
+        # price_match: 1 if within budget, 0 otherwise
+        price_match = 1.0 if (max_price <= 0 or price <= max_price) else 0.0
 
-    s_cert = str(get_field(supplier, "certifications", default="") or "").lower()
-    q_cert = str(query.get("certification") or "").lower()
-    cert_match = (1.0 if q_cert in s_cert else 0.0) if q_cert else 0.5
+        # price_ratio: price / max_price (capped at 2); 0 if no budget
+        if max_price > 0 and price > 0:
+            price_ratio = min(price / max_price, 2.0)
+        else:
+            price_ratio = 0.0
 
-    years = get_field(supplier, "years_with_gs", "years_on_platform", default=0) or 0
-    try:
-        years_normalized = min(float(years) / 10.0, 1.0)
-    except Exception:
-        years_normalized = 0.0
+        # location_match
+        location_match = (
+            1.0 if (query_location and query_location in location) else 0.0
+        )
 
-    biz = str(get_field(supplier, "business_type", default="") or "").lower()
-    is_manufacturer = 1.0 if "manufacturer" in biz else 0.0
-    is_trading_company = 1.0 if "trading company" in biz else 0.0
+        # cert_match
+        cert_match = (
+            1.0 if (query_cert and query_cert in certs) else 0.0
+        )
 
-    return {
-        "price_match": price_match,
-        "price_ratio": price_ratio,
-        "price_distance": price_distance,
-        "location_match": location_match,
-        "cert_match": cert_match,
-        "years_normalized": years_normalized,
-        "is_manufacturer": is_manufacturer,
-        "is_trading_company": is_trading_company,
-        "faiss_score": float(supplier.get("semantic_score") or supplier.get("faiss_score", 0.0)),
-        "faiss_rank": int(supplier.get("faiss_rank") or supplier.get("rank", 999)),
-        "supplier_price": supplier_price,
-    }
+        # faiss_score & faiss_rank (passed through from retriever)
+        faiss_score = float(s.get("faiss_score") or s.get("score") or 0.0)
+        faiss_rank  = float(s.get("faiss_rank") or 0.0)
 
+        records.append({
+            "price_match":    price_match,
+            "price_ratio":    price_ratio,
+            "location_match": location_match,
+            "cert_match":     cert_match,
+            "faiss_score":    faiss_score,
+            "faiss_rank":     faiss_rank,
+        })
 
-def apply_constraint_penalty(score: float, supplier: dict, gamma: float = 0.5) -> float:
-    if supplier.get("constraint_violated", False):
-        return score - gamma * (gamma ** 2 + 1)
-    return score
-
-
-def extract_features_batch(suppliers: List[Dict], query: Dict) -> pd.DataFrame:
-    return pd.DataFrame([extract_features(s, query) for s in suppliers])
+    df = pd.DataFrame(records, columns=FEATURE_COLS).astype(np.float32)
+    return df
 
 
-def rescale_scores(scores: np.ndarray) -> np.ndarray:
-    scores = np.clip(scores, 0.0, 1.0)
-    batch_min = scores.min()
-    batch_max = scores.max()
-    if batch_max - batch_min > 1e-6:
-        return 0.35 + (scores - batch_min) / (batch_max - batch_min) * 0.60
-    return np.full_like(scores, 0.70)
-
-
-def rule_based_score(feats: pd.DataFrame) -> np.ndarray:
-    raw = (
-        feats["price_match"] * 0.25 +
-        (1 - feats["price_distance"]) * 0.10 +
-        feats["location_match"] * 0.15 +
-        feats["cert_match"] * 0.15 +
-        feats["years_normalized"] * 0.10 +
-        feats["is_manufacturer"] * 0.05 +
-        feats["faiss_score"] * 0.20
-    ).values
-    return np.clip(raw, 0.0, 1.0)
-
+# ── Ranker class ──────────────────────────────────────────────────────────────
 
 class SupplierRanker:
-    def __init__(self, model_type: Literal["lightgbm", "xgboost", "auto"] = "auto"):
-        self.model = None
-        self.model_type = None
-        self.use_ml = False
-        self._load(model_type)
+    """
+    Production inference ranker.
+    Loads LightGBM (primary) or XGBRanker (fallback) from disk.
+    Falls back to a rule-based scorer if no model file is found.
+    """
 
-    def _load(self, model_type: str):
-        if model_type in ("auto", "lightgbm") and LGBM_AVAILABLE:
-            path = str(cfg.LGBM_MODEL)
-            if os.path.exists(path):
-                try:
-                    with open(path, "rb") as f:
-                        self.model = pickle.load(f)
-                    self.model_type = "lightgbm"
-                    self.use_ml = True
-                    logger.info(f"✅ LightGBM ranker loaded from {path}")
-                    return
-                except Exception as e:
-                    logger.error(f"Failed to load LightGBM model: {e}")
-        logger.warning("⚠️ No ML model found — using rule-based fallback")
-        self.use_ml = False
+    def __init__(self):
+        self.model       = None
+        self.model_type  = "rule-based"
+        self.use_ml      = False
+        self._xgb_feature_cols = None  # set by _load_model if XGB pkl has different feature list
+        self._load_model()
 
-    def rank(self, suppliers: List[Dict], query: Dict) -> List[Dict]:
+    def _load_model(self):
+        # Try LightGBM first (primary model from train_lambdarank.py)
+        lgbm_path = cfg.LGBM_MODEL
+        if lgbm_path.exists():
+            try:
+                with open(lgbm_path, "rb") as f:
+                    payload = pickle.load(f)
+                if isinstance(payload, dict):
+                    self.model = payload.get("model", payload)
+                else:
+                    self.model = payload
+                self.model_type = "lightgbm"
+                self.use_ml     = True
+                logger.info(f"✅ Loaded LightGBM ranker from {lgbm_path}")
+                return
+            except Exception as e:
+                logger.warning(f"⚠️  LightGBM load failed ({e}), trying XGBoost …")
+
+        # Fallback: XGBRanker
+        xgb_path = cfg.XGB_MODEL
+        if xgb_path.exists():
+            try:
+                with open(xgb_path, "rb") as f:
+                    payload = pickle.load(f)
+                if isinstance(payload, dict):
+                    self.model = payload.get("model", payload)
+                    # FIX: train_ranker.py trains XGBRanker on 7 features
+                    # (FEATURE_COLS + years_normalized + is_manufacturer) and
+                    # saves them as payload["feature_cols"]. If we load that
+                    # model here but call predict() with only the 5-feature
+                    # FEATURE_COLS from this file, XGBoost silently produces
+                    # wrong scores (it maps by position, not name). Load the
+                    # saved feature list from the pkl so predict() always gets
+                    # the right columns in the right order.
+                    saved_feats = payload.get("feature_cols")
+                    if saved_feats and saved_feats != FEATURE_COLS:
+                        logger.warning(
+                            f"XGBRanker was trained on {len(saved_feats)} features "
+                            f"{saved_feats}, but FEATURE_COLS here has {len(FEATURE_COLS)}. "
+                            f"Using saved feature list for inference."
+                        )
+                        self._xgb_feature_cols = saved_feats
+                    else:
+                        self._xgb_feature_cols = None  # use default FEATURE_COLS
+                else:
+                    self.model = payload
+                    self._xgb_feature_cols = None
+                self.model_type = "xgboost"
+                self.use_ml     = True
+                logger.info(f"✅ Loaded XGBRanker from {xgb_path}")
+                return
+            except Exception as e:
+                logger.warning(f"⚠️  XGBoost load failed ({e}), using rule-based ranker")
+
+        logger.warning("⚠️  No trained model found — using rule-based ranker")
+
+    def _rule_based_score(self, features: pd.DataFrame) -> np.ndarray:
+        """Weighted linear scorer — the production fallback used when no
+        trained model is available or model.predict() fails.
+
+        FIX (this version): previously used its own weights (price_match
+        0.35 / price_ratio -0.10 / location_match 0.20 / cert_match 0.20
+        / faiss_score 0.20), different from the formula actually
+        evaluated as "V3: No LTR" / "B3: Rule-Based" in ablation.py /
+        baselines.py (0.40/0.30/0.25/0.05, no price_ratio term). That
+        meant the live fallback ranker users could actually be served by
+        was never the same scorer the paper's NDCG numbers describe.
+        Now delegates to rule_baseline.score_rule_based() so production
+        behavior matches what's evaluated. NOTE: this changes live
+        ranking output when the fallback path is hit (no model file, or
+        model.predict() raises) — re-validate before deploying if this
+        fallback sees real traffic.
+        """
+        return _canonical_rule_scorer(features)
+
+    def rank(
+        self,
+        suppliers: List[Dict[str, Any]],
+        query: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        Rank `suppliers` for `query`.
+        Returns the same list sorted by descending score,
+        with a 'score' key added/updated on each dict.
+        """
         if not suppliers:
-            return []
+            return suppliers
 
-        feats = extract_features_batch(suppliers, query)
+        scores = self.score_batch(suppliers, query)
+
+        for supplier, s in zip(suppliers, scores):
+            supplier["score"] = float(s)
+
+        return sorted(suppliers, key=lambda s: s.get("score", 0.0), reverse=True)
+
+    def score_batch(
+        self,
+        suppliers: List[Dict[str, Any]],
+        query: Dict[str, Any],
+    ) -> np.ndarray:
+        """
+        Compute raw relevance scores for `suppliers` against `query`,
+        without mutating the input dicts or sorting. Shared by `rank()`
+        and the single-supplier `score()` convenience function below.
+        """
+        if not suppliers:
+            return np.array([], dtype=np.float32)
+
+        features = extract_features_batch(suppliers, query)
 
         if self.use_ml and self.model is not None:
             try:
-                raw_scores = self.model.predict(feats[FEATURE_COLS].values)
-                raw_scores = np.clip(raw_scores, 0, 1)
+                # Use saved feature list if it differs from the module default
+                # (happens when an XGBRanker trained on more features is loaded).
+                active_cols = self._xgb_feature_cols or FEATURE_COLS
+                feat_vals = features[active_cols].values.astype(np.float32)
+                return self.model.predict(feat_vals)
             except Exception as e:
-                logger.error(f"ML prediction failed: {e}")
-                raw_scores = rule_based_score(feats)
+                logger.warning(f"Model predict failed ({e}); falling back to rule-based")
+                return self._rule_based_score(features)
         else:
-            raw_scores = rule_based_score(feats)
+            return self._rule_based_score(features)
 
-        scores = rescale_scores(raw_scores)
-
-        for i, s in enumerate(suppliers):
-            raw_score = float(raw_scores[i])
-            s["score"] = apply_constraint_penalty(float(scores[i]), s)
-            s["raw_score"] = raw_score
-            s["reasons"] = self._reasons(s, query, feats.iloc[i])
-
-        return sorted(suppliers, key=lambda x: x["score"], reverse=True)
-
-    def _reasons(self, s: dict, q: dict, f: pd.Series) -> List[str]:
-        r = ["Relevant product match"]
-        if f["price_match"] > 0:
-            r.append("Price within budget")
-        if f["location_match"] == 1.0:
-            r.append("Exact location match")
-        elif f["location_match"] > 0:
-            r.append("Partial location match")
-        if f["cert_match"] > 0:
-            r.append(f"{q.get('certification','Required')} certification")
-        yrs = get_field(s, "years_with_gs", "years_on_platform", default=0) or 0
-        try:
-            if int(float(yrs)) >= 5:
-                r.append(f"{int(float(yrs))}+ years on platform")
-        except Exception:
-            pass
-        if f["is_manufacturer"] > 0:
-            r.append("Direct manufacturer")
-        return r
+    def score_one(self, supplier: Dict[str, Any], query: Dict[str, Any]) -> float:
+        """Score a single supplier dict against a query dict."""
+        return float(self.score_batch([supplier], query)[0])
 
 
-_ranker = None
+# ── MMR diversification ───────────────────────────────────────────────────────
+
+def apply_mmr(
+    ranked: List[Dict[str, Any]],
+    top_k: int = 10,
+    lambda_param: float = 0.5,
+) -> List[Dict[str, Any]]:
+    """
+    Maximal Marginal Relevance re-ordering for diversity.
+    Uses faiss_score + price as a simple 2D embedding proxy.
+    Returns up to top_k items.
+    """
+    if not ranked or top_k <= 0:
+        return ranked[:top_k]
+
+    def _vec(s: Dict) -> np.ndarray:
+        return np.array([
+            float(s.get("faiss_score") or s.get("score") or 0.0),
+            min(parse_price(s.get("price")) / 1e5, 1.0),   # normalise price
+        ], dtype=np.float32)
+
+    selected: List[Dict] = []
+    remaining = list(ranked)
+
+    while remaining and len(selected) < top_k:
+        if not selected:
+            # First pick: highest relevance score
+            best = max(remaining, key=lambda s: float(s.get("score", 0.0)))
+        else:
+            sel_vecs = np.stack([_vec(s) for s in selected])
+
+            def mmr_score(s: Dict) -> float:
+                rel  = float(s.get("score", 0.0))
+                v    = _vec(s)
+                sims = [float(np.dot(v, sv) / (np.linalg.norm(v) * np.linalg.norm(sv) + 1e-9))
+                        for sv in sel_vecs]
+                max_sim = max(sims) if sims else 0.0
+                return lambda_param * rel - (1 - lambda_param) * max_sim
+
+            best = max(remaining, key=mmr_score)
+
+        selected.append(best)
+        remaining.remove(best)
+
+    return selected
 
 
+# ── Singleton factory ─────────────────────────────────────────────────────────
+
+@lru_cache(maxsize=1)
 def get_ranker() -> SupplierRanker:
-    global _ranker
-    if _ranker is None:
-        _ranker = SupplierRanker()
-    return _ranker
+    """Return a cached singleton SupplierRanker."""
+    return SupplierRanker()
 
 
-def score(supplier: dict, query: dict) -> float:
-    r = get_ranker()
-    ranked = r.rank([supplier], query)
-    return ranked[0]["score"] if ranked else 0.0
+# ── Module-level convenience wrapper ──────────────────────────────────────────
+
+def score(supplier: Dict[str, Any], query: Dict[str, Any]) -> float:
+    """
+    Score a single supplier dict against a query dict, using the cached
+    singleton ranker. Convenience wrapper around get_ranker().score_one()
+    for callers (e.g. backend.app.api.chat) that score suppliers one at a
+    time inside a loop rather than batching via rank().
+    """
+    return get_ranker().score_one(supplier, query)

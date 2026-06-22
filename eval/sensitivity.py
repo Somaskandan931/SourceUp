@@ -47,8 +47,20 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+from pathlib import Path
+
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
 LGBM_PATH  = str(cfg.LGBM_MODEL)
@@ -61,10 +73,18 @@ sns.set_style("whitegrid")
 plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
 
 FEATURE_COLS      = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 CONSTRAINT_COLS   = ["price_match", "location_match", "cert_match"]
 GAMMA_VALUES      = np.round(np.arange(0.0, 1.05, 0.1), 2)
@@ -103,7 +123,19 @@ def load_model():
     if not os.path.exists(LGBM_PATH):
         return None
     with open(LGBM_PATH, "rb") as f:
-        return pickle.load(f)
+        model = pickle.load(f)
+    # FIX: a real run hit a LightGBM shape error here because LGBM_PATH
+    # held a stale model trained before a FEATURE_COLS change. Checking
+    # num_feature() up front falls back gracefully (callers here already
+    # branch on model is None / use the rule-based fallback) instead of
+    # raising a raw lightgbm.basic traceback mid-sweep.
+    n_model_features = model.num_feature() if hasattr(model, "num_feature") else None
+    if n_model_features is not None and n_model_features != len(FEATURE_COLS):
+        print(f"   ❌ {LGBM_PATH} was trained with {n_model_features} features, "
+              f"but FEATURE_COLS here has {len(FEATURE_COLS)}. Stale model — "
+              f"retrain via: python pipeline/run_all.py --train-lambdarank")
+        return None
+    return model
 
 
 # ============================================================================
@@ -211,16 +243,11 @@ def run_gamma_sweep(df_test: pd.DataFrame, y_test: pd.Series,
         base_scores = model.predict(df_test[FEATURE_COLS])
         print(f"  Using LightGBM model scores as base")
     else:
-        # Fallback rule-based base scores
-        base_scores = (
-            df_test["price_match"]          * 0.35 +
-            (1 - df_test["price_distance"]) * 0.10 +
-            df_test["location_match"]       * 0.20 +
-            df_test["cert_match"]           * 0.20 +
-            df_test["years_normalized"]     * 0.05 +
-            df_test["is_manufacturer"]      * 0.05 +
-            df_test["faiss_score"]          * 0.05
-        ).values
+        # Fallback rule-based base scores. Delegates to rule_baseline's
+        # canonical score_rule_based() — the single formula now shared by
+        # every script in this repo (see rule_baseline.py docstring for
+        # the inventory of the 7 previously-divergent copies this fixes).
+        base_scores = _canonical_rule_scorer(df_test)
         print("  ⚠️  LightGBM not found — using rule-based base scores")
 
     violations = compute_violation_signal(df_test)
@@ -292,15 +319,10 @@ def run_stress_test(df_test: pd.DataFrame, y_test: pd.Series,
         if model is not None:
             pred = model.predict(df_r[FEATURE_COLS])
         else:
-            pred = (
-                df_r["price_match"]          * 0.35 +
-                (1 - df_r["price_distance"]) * 0.10 +
-                df_r["location_match"]       * 0.20 +
-                df_r["cert_match"]           * 0.20 +
-                df_r["years_normalized"]     * 0.05 +
-                df_r["is_manufacturer"]      * 0.05 +
-                df_r["faiss_score"]          * 0.05
-            ).values
+            # Delegates to rule_baseline's canonical score_rule_based()
+            # (see rule_baseline.py docstring for why this is now the
+            # single shared formula instead of a local copy).
+            pred = _canonical_rule_scorer(df_r)
 
         rows.append({
             "Regime":    regime,

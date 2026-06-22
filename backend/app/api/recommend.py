@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import traceback
 import pandas as pd
+import numpy as np
 import math
 import sys
 from pathlib import Path
@@ -22,8 +23,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from backend.app.models.retriever import retrieve, retrieve_hybrid, retrieve_bm25, load_index
-from backend.app.models.ranker import get_ranker, extract_features_batch
+from backend.app.models.retriever import retrieve, retrieve_hybrid, retrieve_bm25, load_index, rerank_with_cross_encoder
+from backend.app.models.ranker import get_ranker, extract_features_batch, apply_mmr
 from backend.app.models.constraint_engine import get_constraint_engine
 from backend.app.services.decision_trace import get_decision_trace
 from backend.app.services.what_if_simulator import get_what_if_simulator
@@ -69,6 +70,8 @@ class SearchQuery(BaseModel):
     # Feature flags
     enable_explanations: Optional[bool] = True
     enable_what_if: Optional[bool] = False
+    enable_cross_encoder: Optional[bool] = True
+    enable_diversity: Optional[bool] = True
 
 
 class WhatIfQuery(BaseModel):
@@ -89,6 +92,15 @@ def clean_value(value):
     """
     if value is None:
         return None
+
+    # numpy scalar types (np.float32, np.float64, np.int64, np.bool_, etc.)
+    # are NOT instances of Python's float/int/bool, so they fall through the
+    # checks below and get handed to FastAPI's jsonable_encoder as opaque
+    # objects, which can't serialize them (it tries dict()/vars() on them
+    # and raises). Convert any numpy scalar to its native Python equivalent
+    # via .item() before the type-specific checks.
+    if isinstance(value, np.generic):
+        value = value.item()
 
     if isinstance(value, float):
         if math.isnan(value) or math.isinf(value):
@@ -210,6 +222,19 @@ async def recommend(q: SearchQuery):
             logger.error(f"Retrieval failed: {str(e)}", exc_info=True)
             raise
 
+        # ====================================================================
+        # STEP 1.5: Cross-Encoder Reranking (Priority 3)
+        # Reranks the FAISS shortlist only (not the full supplier base) for
+        # higher-precision ordering before constraint filtering / LTR ranking.
+        # ====================================================================
+        if q.enable_cross_encoder and candidates:
+            ce_start = time.time()
+            try:
+                candidates = rerank_with_cross_encoder(q.product, candidates, top_n=100)
+                logger.info(f"✅ Cross-encoder rerank ({(time.time() - ce_start) * 1000:.1f}ms)")
+            except Exception as e:
+                logger.warning(f"Cross-encoder rerank failed (non-critical): {e}")
+
         if not candidates:
             logger.warning(f"No candidates found for query: {q.product}")
             return {
@@ -290,6 +315,14 @@ async def recommend(q: SearchQuery):
             ranking_time = (time.time() - step_start) * 1000
             logger.info(f"✅ Ranked {len(ranked_suppliers)} suppliers ({ranking_time:.1f}ms)")
             logger.info(f"   Ranking method: {ranker.model_type if hasattr(ranker, 'model_type') and ranker.use_ml else 'rule-based'}")
+
+            # Priority 7: Supplier Diversity (MMR) — avoid the top 20 being
+            # dominated by near-duplicate listings from the same supplier.
+            if q.enable_diversity:
+                try:
+                    ranked_suppliers = apply_mmr(ranked_suppliers, top_k=20, lambda_param=0.3)
+                except Exception as e:
+                    logger.warning(f"MMR diversity selection failed (non-critical): {e}")
 
         except Exception as e:
             logger.error(f"Ranking failed: {str(e)}", exc_info=True)

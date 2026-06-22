@@ -46,19 +46,52 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
 
 TRAIN_DATA = str(cfg.TRAINING_DATA)
-XGB_PATH = str(cfg.LGBM_MODEL)  # NOTE: cfg key name unchanged but holds XGBoost model
+# FIX: this previously pointed at cfg.LGBM_MODEL ("NOTE: cfg key name
+# unchanged but holds XGBoost model"). That path is also where
+# train_lambdarank.py saves its LightGBM Booster, and where 6 other eval
+# scripts (stability.py, fairness.py, sensitivity.py, baselines.py,
+# ablation.py) load expecting a LightGBM object. Whichever trainer ran
+# last silently determined what every reader of that path got — train_
+# ranker.py no longer writes there at all (see its own FIX comment), so
+# this now points at the model's actual, dedicated file instead.
+XGB_PATH = str(cfg.MODELS_DIR / "xgb_ranker.pkl")
 OUT_DIR = str(cfg.EVAL_DIR)
 PLOTS_DIR = str(cfg.EVAL_PLOTS_DIR)
 
 cfg.ensure_dirs()
 
 # ---------------------------------------------------------------------------
-# SHAP import
+# XGBoost import
 # ---------------------------------------------------------------------------
+# FIX: shap.TreeExplainer(model) was previously used to compute SHAP values.
+# On the XGBoost version installed in this environment, the model's internal
+# base_score is serialized as a stringified array (e.g. '[-2.2569608E-9]')
+# rather than a plain float. shap's XGBTreeModelLoader does a naive
+# float(learner_model_param["base_score"]) when parsing the model, which
+# can't handle that bracketed scientific-notation string and raises:
+#   ValueError: could not convert string to float: '[-2.2569608E-9]'
+# This is a known shap <-> xgboost version-compatibility issue, not a bug
+# in the ranker, features, or training data.
+#
+# Fix: bypass shap.TreeExplainer entirely and use XGBoost's own native
+# TreeSHAP computation — Booster.predict(dmatrix, pred_contribs=True).
+# This returns mathematically identical SHAP values to TreeExplainer
+# (same TreeSHAP algorithm, computed internally by XGBoost itself) without
+# ever touching shap's base_score parsing code. The `shap` package is no
+# longer required for value computation, only (optionally) for plotting
+# helpers like shap.summary_plot further down — it's kept imported for that.
 try:
     import shap
 
@@ -68,20 +101,33 @@ except ImportError:
     print("❌  shap not installed.  Run: pip install shap")
     sys.exit(1)
 
+try:
+    import xgboost as xgb
+
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+    print("❌  xgboost not installed.  Run: pip install xgboost")
+    sys.exit(1)
+
 # ---------------------------------------------------------------------------
 # Feature columns
 # ---------------------------------------------------------------------------
 FEATURE_COLS = [
     "price_match",
     "price_ratio",
-    "price_distance",
     "location_match",
     "cert_match",
-    "years_normalized",
-    "is_manufacturer",
-    "is_trading_company",
     "faiss_score",
-    "faiss_rank",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 FEATURE_LABELS = {
@@ -94,7 +140,6 @@ FEATURE_LABELS = {
     "is_manufacturer": "Is Manufacturer",
     "is_trading_company": "Is Trading Company",
     "faiss_score": "Semantic Similarity (SBERT)",
-    "faiss_rank": "FAISS Retrieval Rank",
 }
 
 sns.set_style("whitegrid")
@@ -106,14 +151,33 @@ plt.rcParams.update({"font.size": 10, "figure.dpi": 150})
 # ============================================================================
 
 def load_model():
-    """Load XGBoost XGBRanker model"""
+    """Load XGBoost XGBRanker model.
+
+    train_ranker.py saves a dict {"model": <XGBRanker>, "feature_cols": [...]}
+    to xgb_ranker.pkl, not the raw model object — unwrap it here so callers
+    (compute_shap_values, etc.) get the actual XGBRanker instance.
+    """
     if not os.path.exists(XGB_PATH):
         raise FileNotFoundError(
             f"XGBoost model not found: {XGB_PATH}\n"
             "Run: python backend/app/models/train_ranker.py"
         )
     with open(XGB_PATH, "rb") as f:
-        return pickle.load(f)
+        loaded = pickle.load(f)
+    model = loaded["model"] if isinstance(loaded, dict) and "model" in loaded else loaded
+    # FIX: a sibling LightGBM model on this same project hit a feature-count
+    # mismatch from a stale .pkl trained before a FEATURE_COLS change (see
+    # ablation.py/baselines.py/fairness.py/sensitivity.py/stability.py for
+    # the same fix). Added here too so a stale xgb_ranker.pkl fails with an
+    # actionable message instead of a raw xgboost shape error deep in SHAP.
+    n_model_features = getattr(model, "n_features_in_", None)
+    if n_model_features is not None and n_model_features != len(FEATURE_COLS):
+        raise ValueError(
+            f"{XGB_PATH} was trained with {n_model_features} features, "
+            f"but FEATURE_COLS here has {len(FEATURE_COLS)}. Stale model — "
+            f"retrain via: python pipeline/run_all.py --train-xgbranker"
+        )
+    return model
 
 
 def load_test_data(test_frac: float = 0.2, seed: int = 42) -> pd.DataFrame:
@@ -143,47 +207,61 @@ def load_test_data(test_frac: float = 0.2, seed: int = 42) -> pd.DataFrame:
 
 def compute_shap_values(model, df_test: pd.DataFrame):
     """
-    Compute SHAP values for XGBoost Ranker using native XGBoost API.
+    Compute SHAP values for the XGBoost XGBRanker using XGBoost's own
+    native TreeSHAP implementation (pred_contribs=True).
 
-    FIX:
-    Avoids SHAP TreeExplainer parser bug entirely by using
-    XGBoost's built-in pred_contribs=True.
+    FIX: shap.TreeExplainer(model) was previously used here. On the
+    XGBoost version installed in this environment, the model serializes
+    its internal base_score as a stringified array, e.g.
+    '[-2.2569608E-9]', instead of a plain float. shap's internal
+    XGBTreeModelLoader does float(learner_model_param["base_score"]) when
+    parsing the model, which cannot handle that bracketed string and
+    raised:
+        ValueError: could not convert string to float: '[-2.2569608E-9]'
 
-    This is mathematically equivalent to TreeSHAP.
+    This is a shap <-> xgboost version-compatibility issue, not a problem
+    with the model, features, or data. XGBoost's own
+    Booster.predict(dmatrix, pred_contribs=True) computes the exact same
+    TreeSHAP values internally (it's the reference implementation SHAP's
+    TreeExplainer itself calls out to for XGBoost models) without ever
+    going through shap's base_score string parsing, so it sidesteps the
+    bug entirely while returning mathematically identical attributions.
+
+    Note: XGBoost's flag is `pred_contribs` (plural) and requires a
+    DMatrix — this differs from LightGBM's `pred_contrib` (singular),
+    which accepts a raw array directly. The two APIs are not
+    interchangeable; calling LightGBM-style on an XGBRanker fails with
+    "got an unexpected keyword argument 'pred_contrib'", and calling
+    XGBoost-style on a LightGBM Booster fails just as fast — always match
+    the API to the actual model type in use.
     """
 
-    print("\n🔬 Computing SHAP values using LightGBM native TreeSHAP...")
+    print("\n🔬 Computing SHAP values using XGBoost native TreeSHAP "
+          "(pred_contribs=True)...")
 
-    # Keep dataframe — LightGBM predict accepts numpy directly, no DMatrix needed
-    X = df_test[FEATURE_COLS].astype(np.float64)
+    X = df_test[FEATURE_COLS].astype(np.float32)
 
     try:
-        # ---------------------------------------------------------
-        # GET RAW BOOSTER — handle both raw Booster and LGBMRanker
-        # ---------------------------------------------------------
-        if hasattr(model, "booster_"):
-            # sklearn LGBMRanker wrapper
-            booster = model.booster_
-        else:
-            # Already a raw lightgbm.Booster
-            booster = model
+        # Unwrap to the raw Booster regardless of whether `model` is the
+        # sklearn XGBRanker wrapper (has .get_booster()) or an
+        # already-raw xgboost.Booster.
+        booster = model.get_booster() if hasattr(model, "get_booster") else model
 
-        print("   Computing SHAP contributions via pred_contrib=True...")
+        print("   Computing SHAP contributions via pred_contribs=True...")
 
-        # LightGBM native TreeSHAP — returns (n_samples, n_features + 1)
-        # last column is the expected value (bias) repeated per row
-        shap_contribs = booster.predict(
-            X.values,
-            pred_contrib=True
-        )
+        dmat = xgb.DMatrix(X.values, feature_names=list(FEATURE_COLS))
 
-        # Last column = expected value (bias term)
+        # XGBoost native TreeSHAP — returns (n_samples, n_features + 1).
+        # Last column is the expected value (bias) repeated per row.
+        shap_contribs = booster.predict(dmat, pred_contribs=True)
+
         shap_values_array = shap_contribs[:, :-1]
         expected_value = float(shap_contribs[0, -1])
 
-        # ---------------------------------------------------------
-        # Lightweight explainer mock
-        # ---------------------------------------------------------
+        # Lightweight explainer mock — downstream plotting code only reads
+        # `.expected_value` off this object, never any shap.TreeExplainer
+        # internals, so a stand-in object is sufficient and keeps the
+        # broken base_score parser out of the call path entirely.
         class DummyExplainer:
             pass
 

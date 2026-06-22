@@ -41,8 +41,21 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths — all resolved via config.cfg (no hardcoded paths)
 # ---------------------------------------------------------------------------
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1]))
+from pathlib import Path
+
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 from config import cfg
+from rule_baseline import score_rule_based as _canonical_rule_scorer
+from rule_baseline import score_rule_based_independent as _independent_rule_scorer
 
 CLEAN_DATA = str(cfg.CLEAN_DATA)
 TRAIN_DATA = str(cfg.TRAINING_DATA)
@@ -81,10 +94,18 @@ except ImportError:
 # ============================================================================
 
 FEATURE_COLS = [
-    "price_match", "price_ratio", "price_distance",
-    "location_match", "cert_match", "years_normalized",
-    "is_manufacturer", "is_trading_company",
-    "faiss_score", "faiss_rank",
+    "price_match", "price_ratio",
+    "location_match", "cert_match",
+    "faiss_score",
+    # NOTE: years_normalized, is_manufacturer, is_trading_company removed —
+    # confirmed zero SHAP importance across two independent training runs
+    # (near-constant values in current data). Re-add here if richer supplier
+    # tenure/business-type data becomes available.
+    # NOTE: price_distance removed — for price/max_price <= 2 (the vast
+    # majority of rows) it equals abs(price_ratio - 1) exactly, a pure
+    # deterministic transform of price_ratio. Keeping both caused the model
+    # to split arbitrarily between two copies of the same signal, which is
+    # why SHAP rank order for price features flipped between training runs.
 ]
 
 CONSTRAINT_COLS = ["price_match", "location_match", "cert_match"]
@@ -143,8 +164,13 @@ def ndcg_at_k(y_true: pd.Series, y_pred: np.ndarray,
             continue
         t = np.nan_to_num(y_true[m].values, nan=0.0).reshape(1, -1)
         p = np.nan_to_num(y_pred[m], nan=0.0).reshape(1, -1)
-        if len(np.unique(t)) <= 1 or np.all(p == p[0][0]):
-            continue
+        # NOTE: previously skipped queries where predictions were constant
+        # (np.all(p == p[0][0])) or true labels had no variance. That guard
+        # caused V5 (which intentionally neutralizes most features) to drop
+        # nearly every test query and silently report NDCG@10 = 0.0 instead
+        # of a real, low score — inconsistent with eval/baselines.py's
+        # ndcg_per_query, which has no such guard and scores every variant
+        # the same way. Removed for consistency across the eval suite.
         try:
             scores.append(ndcg_score(t, p, k=k))
         except Exception:
@@ -255,23 +281,55 @@ def evaluate_variant(name: str, y_true: pd.Series, y_pred: np.ndarray,
 # ============================================================================
 
 def load_lgbm_model():
-    """Load saved LightGBM model from disk."""
+    """Load saved LightGBM model from disk.
+
+    FIX: a real run hit "number of features in data (6) is not the same
+    as it was in training data (8)" here — ranker_lightgbm.pkl on disk
+    was a stale model trained before the FEATURE_COLS fix (8 features),
+    while this script's FEATURE_COLS (6) had already been corrected.
+    LightGBM's own error message doesn't say *why* the counts differ, so
+    this adds an explicit check against num_feature() with a message that
+    tells you exactly what to do, instead of a stack trace from deep
+    inside lightgbm.basic.
+    """
     if not os.path.exists(LGBM_PATH):
         return None
     with open(LGBM_PATH, "rb") as f:
-        return pickle.load(f)
+        model = pickle.load(f)
+    n_model_features = model.num_feature() if hasattr(model, "num_feature") else None
+    if n_model_features is not None and n_model_features != len(FEATURE_COLS):
+        print(f"   ❌ {LGBM_PATH} was trained with {n_model_features} features, "
+              f"but FEATURE_COLS here has {len(FEATURE_COLS)}.")
+        print(f"      This model is stale — retrain it: "
+              f"python pipeline/run_all.py --train-lambdarank")
+        print(f"      (or directly: python backend/app/models/train_lambdarank.py)")
+        return None
+    return model
 
 
 def load_standard_lgbm_model():
     """Load the Standard-LambdaRank booster saved alongside the CD model
-    (by backend/app/models/train_lambdarank.py) so the ablation can isolate
-    CD-LambdaRank's contribution directly, instead of conflating it with
-    'no LTR at all' (V3)."""
-    std_path = LGBM_PATH.replace(".pkl", "_standard.pkl")
+    (by train_lambdarank.py) so the ablation can isolate CD-LambdaRank's
+    contribution directly, instead of conflating it with 'no LTR at all'
+    (V3).
+
+    FIX: previously derived this path via LGBM_PATH.replace(".pkl",
+    "_standard.pkl") — a fragile string transform duplicated independently
+    in this file and in train_lambdarank.py. Now reads cfg.LGBM_MODEL_STANDARD
+    directly so the two can never drift apart again.
+    """
+    std_path = str(cfg.LGBM_MODEL_STANDARD)
     if not os.path.exists(std_path):
         return None
     with open(std_path, "rb") as f:
-        return pickle.load(f)
+        model = pickle.load(f)
+    n_model_features = model.num_feature() if hasattr(model, "num_feature") else None
+    if n_model_features is not None and n_model_features != len(FEATURE_COLS):
+        print(f"   ❌ {std_path} was trained with {n_model_features} features, "
+              f"but FEATURE_COLS here has {len(FEATURE_COLS)}. Stale — retrain via "
+              f"python pipeline/run_all.py --train-lambdarank")
+        return None
+    return model
 
 
 def score_v1b_standard_lambdarank(df_test: pd.DataFrame) -> Optional[np.ndarray]:
@@ -328,28 +386,55 @@ def score_v3_no_ltr(df_test: pd.DataFrame) -> np.ndarray:
     return score_rule_based(df_test)
 
 
+def score_v3b_no_ltr_independent(df_test: pd.DataFrame) -> np.ndarray:
+    """
+    V3b: No LTR, label-independent rule scorer. Same role as V3 (the
+    system with the learned ranker removed) but scored with
+    rule_baseline.score_rule_based_independent() instead of
+    score_rule_based() — built from category_overlap_score/
+    price_distance/certification_count/is_manufacturer, none of which
+    are inputs to weak_label_generator.compute_weak_label(). (A 5th
+    candidate column, supplier_rating, was dropped from this formula
+    after check_independent_baseline_inputs() found it permanently
+    constant in the real data — see rule_baseline.py.)
+
+    Report ALONGSIDE V3, not instead of it. V3's KNOWN LIMITATION
+    (rule_baseline.py docstring) is that it shares 95% of its weight
+    with signals that gate the top relevance labels, which is a
+    plausible reason V3 beats V1 on NDCG@10. V3b answers the same
+    ablation question ("how much is the learned ranker contributing?")
+    without that overlap, so a V1-vs-V3b comparison is the harder,
+    more defensible version of the V1-vs-V3 comparison already in this
+    table. Run check_independent_baseline_inputs() against your real
+    ranking_data.csv before citing this — see rule_baseline.py.
+    """
+    return _independent_rule_scorer(df_test)
+
+
 def score_rule_based(df: pd.DataFrame) -> np.ndarray:
     """
-    Rule-based scoring matching ranker.py weights exactly.
-    Used by V3 (No LTR) and V5 (Rule-Based Only).
+    Rule-based scoring. Used by V3 (No LTR) and V5 (Rule-Based Only).
+
+    FIX (this version): delegates to rule_baseline.score_rule_based(),
+    the single canonical formula now shared by every script in this repo
+    that needs a "no-ML" baseline (run_all.py, baselines.py,
+    sensitivity.py, stability.py, train_ranker.py, ranker.py's production
+    fallback, case_study.py). Previously this function, baselines.py's
+    score_rule_based_default(), run_all.py's rule_based_score(), and four
+    other call sites each hand-rolled their own weights/feature set,
+    which meant "Rule-Based Baseline NDCG@10" printed a different number
+    in run_all.py's pipeline log (0.8549) than in this script (0.8720) —
+    same name, different formula. See rule_baseline.py's module docstring
+    for the full inventory and rationale for picking these particular
+    weights (0.40 price_match / 0.30 location_match / 0.25 cert_match /
+    0.05 faiss_score) as the canonical version.
+
+    NOTE: see rule_baseline.py's "KNOWN LIMITATION" section and run
+    check_label_baseline_overlap.py before citing V3/V5 vs. V1 as
+    independent validation — this formula shares most of its weight with
+    the signals that gate top relevance labels in weak_label_generator.py.
     """
-    # Sanitize all feature cols before scoring to prevent NaN propagation
-    df = df.copy()
-    for _col in ["price_match", "price_distance", "location_match",
-                 "cert_match", "years_normalized", "is_manufacturer", "faiss_score"]:
-        if _col in df.columns:
-            df[_col] = df[_col].fillna(0).replace([np.inf, -np.inf], 0)
-    scores = (
-        df["price_match"]        * 0.35 +
-        (1 - df["price_distance"]) * 0.10 +
-        df["location_match"]     * 0.20 +
-        df["cert_match"]         * 0.20 +
-        df["years_normalized"]   * 0.05 +
-        df["is_manufacturer"]    * 0.05 +
-        df["faiss_score"]        * 0.05
-    )
-    scores = np.nan_to_num(scores.values, nan=0.0, posinf=1.0, neginf=0.0)
-    return scores
+    return _canonical_rule_scorer(df)
 
 
 def score_v4_no_semantic(df_train: pd.DataFrame, df_test: pd.DataFrame) -> np.ndarray:
@@ -425,6 +510,7 @@ _VARIANT_COLORS = {
     "V1: Full Model":          "#2166ac",
     "V2: No Constraints":      "#d73027",
     "V3: No LTR":              "#f46d43",
+    "V3b: No LTR (independent)": "#fee090",
     "V4: No Semantic":         "#fdae61",
     "V5: Rule-Based Only":     "#abd9e9",
 }
@@ -603,6 +689,15 @@ def run_ablation():
     print("▶ V3: No LTR (rule-based scorer only)")
     pred_v3 = score_v3_no_ltr(df_test)
     results.append(evaluate_variant("V3: No LTR", y_test, pred_v3, df_test, query_test))
+    print(f"   NDCG@10 = {results[-1]['NDCG@10']:.4f}   CVR = {results[-1]['CVR']:.4f}")
+
+    # ------------------------------------------------------------------
+    # V3b: No LTR, label-independent rule scorer (see rule_baseline.py's
+    # KNOWN LIMITATION section for why V3 alone isn't a clean comparison)
+    # ------------------------------------------------------------------
+    print("▶ V3b: No LTR, label-independent scorer (no overlap with weak-label formula)")
+    pred_v3b = score_v3b_no_ltr_independent(df_test)
+    results.append(evaluate_variant("V3b: No LTR (independent)", y_test, pred_v3b, df_test, query_test))
     print(f"   NDCG@10 = {results[-1]['NDCG@10']:.4f}   CVR = {results[-1]['CVR']:.4f}")
 
     # ------------------------------------------------------------------

@@ -1,14 +1,17 @@
 import sys
 import os
+from pathlib import Path
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(
-            os.path.abspath(__file__)
-        )
-    )
-)
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 
 import glob
 import pandas as pd
@@ -29,6 +32,40 @@ CANONICAL_COLUMNS = [
     "category l1", "category l2", "category l3", "category l4",
 ]
 
+# ROOT CAUSE FIX (this version): the old code did `df = df[canonical]`
+# unconditionally, which silently DROPPED any column not in
+# CANONICAL_COLUMNS — including real, well-populated columns some source
+# files actually have. Confirmed against the raw scraped CSVs:
+#   - output8.csv has a "Rating" column, 97.5% filled, real 2.0-5.0
+#     values — dropped on the floor by the old `df[canonical]` line.
+#   - output8.csv also has "City" (distinct from "Supplier Location") and
+#     "Certification Count" (pre-computed) — also dropped.
+#   - output_full.csv has "Cert Count" (its own pre-computed cert count)
+#     and ~650 other columns (Reliability Score, Composite Score, Spec:
+#     * fields, etc.) — most of those are genuinely file-specific and
+#     not worth threading through the canonical schema, but rating in
+#     particular matters: it's a direct input to
+#     rule_baseline.score_rule_based_independent()'s supplier_rating
+#     term, which was previously reported as permanently constant
+#     (std=0.0) and excluded from that formula. That conclusion was
+#     right about the symptom (suppliers_clean.csv never had usable
+#     rating data) but wrong about the cause — it wasn't that no source
+#     file has ratings, it's that this file threw them away before
+#     clean_normalize.py (step 2) ever got a chance to see them.
+#
+# Fix: in addition to the required CANONICAL_COLUMNS (always present,
+# "Unknown"-filled if a source file lacks them — unchanged behaviour),
+# also pass through any of these OPTIONAL_ENRICHMENT_COLUMNS a given
+# source file happens to have. Files without them simply get NaN for
+# that column in the merged output, same as any other missing optional
+# field — this does not change CANONICAL_COLUMNS or break any existing
+# downstream code that only reads the original 23 columns.
+OPTIONAL_ENRICHMENT_COLUMNS = [
+    "rating",
+    "city",
+    "certification count",
+]
+
 # Column aliases: maps alternative names from other scrapers → canonical
 COLUMN_ALIASES = {
     "years on platform": "years with gs",
@@ -36,9 +73,9 @@ COLUMN_ALIASES = {
     "company": "company name",
     "supplier": "supplier name",
     "location": "supplier location",
-    "city": "supplier location",   # indiamart uses separate city column
     "description": "product name",
     "moq": "min order qty",
+    "cert count": "certification count",  # output_full.csv (IndiaMART) spelling
 }
 
 
@@ -146,9 +183,31 @@ def validate_and_merge(limit=None):
                     df[col] = "Unknown"
 
             # ------------------------------------------------
-            # Keep only canonical schema
+            # Keep canonical schema + any optional enrichment
+            # columns this particular source file happens to have.
+            #
+            # FIX (this version): previously this was `df = df[canonical]`,
+            # which dropped every column outside the 23-column canonical
+            # schema — including "rating" on files that genuinely have it
+            # (e.g. output8.csv, 97.5% filled). Source files that lack an
+            # optional column simply don't get one added here (left out of
+            # `present_optional`), so after pd.concat() those rows get NaN
+            # for that column — same as any other naturally-missing field,
+            # not "Unknown" (these are enrichment signals, not required
+            # identity fields, so NaN is the more honest default than a
+            # fabricated placeholder string).
             # ------------------------------------------------
-            df = df[canonical]
+            present_optional = [
+                col for col in OPTIONAL_ENRICHMENT_COLUMNS
+                if col in df.columns
+            ]
+            if present_optional:
+                print(
+                    f"   ➕ Optional enrichment columns found: "
+                    f"{present_optional}"
+                )
+
+            df = df[canonical + present_optional]
 
             # ------------------------------------------------
             # Add source tracking
@@ -203,15 +262,22 @@ def validate_and_merge(limit=None):
     )
 
     # ------------------------------------------------------------
-    # Optional limit
+    # Optional limit — random sample, not head(). head() would just take
+    # the first N rows in file-concatenation order, which for uneven file
+    # sizes (e.g. output.csv=35k vs output2.csv=523k) means small --limit
+    # values come ENTIRELY from one source file. A random sample stays
+    # proportionally representative of every file, category, and location.
     # ------------------------------------------------------------
     if limit:
 
-        merged = merged.head(limit)
+        merged = merged.sample(
+            n=min(limit, len(merged)),
+            random_state=42
+        ).reset_index(drop=True)
 
         print(
             f"⚡ Limited dataset to "
-            f"{len(merged):,} rows"
+            f"{len(merged):,} rows (random sample, seed=42)"
         )
 
     # ------------------------------------------------------------

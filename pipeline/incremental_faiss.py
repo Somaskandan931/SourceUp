@@ -14,15 +14,20 @@ Features:
 import sys
 import os
 import gc
+import time
 
-sys.path.insert(
-    0,
-    os.path.dirname(
-        os.path.dirname(
-            os.path.abspath(__file__)
-        )
-    )
-)
+from pathlib import Path
+
+
+def _find_project_root(marker: str = "config.py") -> Path:
+    """Walk up from this file until the folder containing `marker` is found."""
+    for parent in Path(__file__).resolve().parents:
+        if (parent / marker).exists():
+            return parent
+    raise RuntimeError(f"Could not find project root (looked for {marker})")
+
+
+sys.path.insert(0, str(_find_project_root()))
 
 import faiss
 import numpy as np
@@ -39,9 +44,11 @@ torch.backends.cudnn.benchmark = True
 
 MODEL_NAME = "all-mpnet-base-v2"   # Upgraded to match retriever (was all-MiniLM-L6-v2)
 
-BATCH_SIZE = 128                    # Reduced from 256 — mpnet is larger, avoids OOM
+BATCH_SIZE = 128                    # Bumped to 256 below if CUDA+FP16 (see incremental_update)
 
 INDEX_CHUNK_SIZE = 10000
+
+PRINT_EVERY = 50                    # Printing every batch to a Windows console is itself slow
 
 
 def incremental_update():
@@ -162,7 +169,16 @@ def incremental_update():
         device=device
     )
 
-    model.max_seq_length = 256  # Match retriever setting
+    model.max_seq_length = 128  # Trimmed from 256 — most fields here (name/category/
+    # city/certifications) are short; 256 was mostly wasted padding compute.
+    # Revert to 256 if you notice longer "description" text getting truncated.
+
+    # FP16 inference — halves VRAM use (real win, reduces crash risk) and is a
+    # speed win IF this GPU has Tensor Cores (RTX-class). On a plain GTX 1650
+    # (no Tensor Cores) it mainly just saves memory, not raw speed.
+    if device == "cuda":
+        model.half()
+        BATCH_SIZE = 256  # freed VRAM headroom (FP16) lets us push more per batch
 
     # ------------------------------------------------------------
     # Create sample embedding
@@ -197,8 +213,10 @@ def incremental_update():
 
     print(
         f"\n🔄 Encoding {total:,} suppliers "
-        f"in {total_batches:,} batches..."
+        f"in {total_batches:,} batches (batch_size={BATCH_SIZE})..."
     )
+
+    encode_start = time.time()
 
     for start in range(
         0,
@@ -213,13 +231,44 @@ def incremental_update():
 
         batch = corpus[start:end]
 
-        embeddings = model.encode(
-            batch,
-            batch_size=BATCH_SIZE,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True   # unit-norm embeddings for cosine similarity
-        ).astype(np.float32)
+        # Retry on transient CUDA/cuBLAS failures (memory fragmentation from
+        # thousands of consecutive forward passes) instead of crashing the
+        # whole multi-hour run. Falls back to CPU for that one batch if GPU
+        # retries are exhausted.
+        embeddings = None
+        for attempt in range(3):
+            try:
+                embeddings = model.encode(
+                    batch,
+                    batch_size=BATCH_SIZE,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True   # unit-norm embeddings for cosine similarity
+                ).astype(np.float32)
+                break
+            except RuntimeError as e:
+                msg = str(e)
+                if "CUDA" in msg or "CUBLAS" in msg or "cublas" in msg:
+                    print(f"   ⚠️  GPU error on batch {start // BATCH_SIZE + 1} "
+                          f"(attempt {attempt + 1}/3): {e}")
+                    if device == "cuda":
+                        torch.cuda.synchronize()
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                else:
+                    raise
+        if embeddings is None:
+            print(f"   ⚠️  Falling back to CPU for batch {start // BATCH_SIZE + 1}")
+            cpu_model = SentenceTransformer(MODEL_NAME, device="cpu")
+            cpu_model.max_seq_length = 128
+            embeddings = cpu_model.encode(
+                batch,
+                batch_size=BATCH_SIZE,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True
+            ).astype(np.float32)
+            del cpu_model
 
         # Explicit L2 normalization — guarantees IndexFlatIP computes true cosine similarity
         faiss.normalize_L2(embeddings)
@@ -228,23 +277,31 @@ def incremental_update():
         index.add(embeddings)
 
         processed = end
+        batch_num = start // BATCH_SIZE + 1
 
-        percent = (
-            processed / total
-        ) * 100
+        # Printing + gc.collect() every single one of 6,476 batches is real
+        # overhead on its own (console I/O is slow, especially in Windows
+        # terminals). Only do both periodically.
+        if batch_num % PRINT_EVERY == 0 or processed == total:
+            percent = (processed / total) * 100
+            elapsed = time.time() - encode_start
+            rate = processed / elapsed if elapsed > 0 else 0
+            remaining = (total - processed) / rate if rate > 0 else 0
+            print(
+                f"   Batch {batch_num:,}/{total_batches:,} → "
+                f"{processed:,}/{total:,} ({percent:.1f}%) "
+                f"| {rate:,.0f} rows/s "
+                f"| elapsed {elapsed/60:.1f}m | ETA {remaining/60:.1f}m"
+            )
 
-        print(
-            f"   Batch "
-            f"{start // BATCH_SIZE + 1:,}/"
-            f"{total_batches:,} "
-            f"→ {processed:,}/{total:,} "
-            f"({percent:.2f}%)"
-        )
-
-        # RAM cleanup
+        # RAM cleanup — periodic CUDA cache clear prevents the allocator
+        # fragmentation that leads to cuBLASLt workspace failures over a
+        # 6,000+ batch run.
         del embeddings
-
-        gc.collect()
+        if device == "cuda" and batch_num % 200 == 0:
+            torch.cuda.empty_cache()
+        if batch_num % PRINT_EVERY == 0:
+            gc.collect()
 
     # ------------------------------------------------------------
     # Save outputs

@@ -1,0 +1,131 @@
+{
+  "query": {
+    "product": "food packaging suppliers",
+    "max_price": 50000,
+    "moq_budget": 500,
+    "location": "Chennai",
+    "certification": "ISO",
+    "location_mandatory": true
+  },
+  "stage_1_retrieval": {
+    "retrieved": 100
+  },
+  "stage_2_cross_encoder": {
+    "reranked": 100
+  },
+  "stage_3_constraints": {
+    "after_constraints": 100,
+    "fully_matching": 0,
+    "location_matches": 0,
+    "filters_applied": [
+      "certifications",
+      "location",
+      "moq_affordability"
+    ]
+  },
+  "stage_4_ranking": {
+    "ranking_method": "lightgbm"
+  },
+  "stage_5_diversity": {
+    "final_results": 10
+  },
+  "top_results": [
+    {
+      "rank": 1,
+      "supplier": "Dalian Huiyou Packaging Co., Ltd.",
+      "product_name": "Fast Food Container Custom Food Grade Burger And Chips Take Away Paper Boxes Fired Chicken Food Packaging",
+      "price": "0.04 - 0.09",
+      "location": "China",
+      "score": 0.06,
+      "constraint_violated": true
+    },
+    {
+      "rank": 2,
+      "supplier": "Tag Raiser Wooden Products (Dalian) Co., Ltd",
+      "product_name": "Safe Food Grade Kraft Paper Food Container Take Away Lunch Packing Boxes for Carry out Party Resturant",
+      "price": "0.10",
+      "location": "China",
+      "score": -0.0534,
+      "constraint_violated": true
+    },
+    {
+      "rank": 3,
+      "supplier": "Shenzhen Mellerio Package Co.,Limited",
+      "product_name": "High quality factory price custom 4 side sealed bag for food packaging",
+      "price": "0.05 - 0.10",
+      "location": "China",
+      "score": 0.06,
+      "constraint_violated": true
+    },
+    {
+      "rank": 4,
+      "supplier": "Dalian Huiyou Packaging Co., Ltd.",
+      "product_name": "Box Free Sample Takeaway Packaging Food Box Takeout Black Fried Chicken Take Out Paper Lunch Box Food Container",
+      "price": "0.04 - 0.09",
+      "location": "China",
+      "score": 0.06,
+      "constraint_violated": true
+    },
+    {
+      "rank": 5,
+      "supplier": "Huizhou Zhonglifa Industrial Co. Ltd",
+      "product_name": "Net bags of vegetables and firewood onion and potato bags effectively package and print products",
+      "price": "0.04",
+      "location": "China",
+      "score": 0.06,
+      "constraint_violated": true
+    },
+    {
+      "rank": 6,
+      "supplier": "Fujian Shenglin Huanghe I & E Trading Co., Ltd",
+      "product_name": "OEM Recycled Disposable 1000 ml- 32oz paper food packaging box for packing many kinds of food in daily life",
+      "price": "0.09 - 0.10",
+      "location": "China",
+      "score": 0.0469,
+      "constraint_violated": true
+    },
+    {
+      "rank": 7,
+      "supplier": "Ningbo Rison Houseware Co., Ltd._Packaging",
+      "product_name": "Food Box Kraft Paper Box Lunch Box Disposable Food Containers Takeaway Packaging Box with transparent",
+      "price": "0.03 - 0.04",
+      "location": "China",
+      "score": 0.0381,
+      "constraint_violated": true
+    },
+    {
+      "rank": 8,
+      "supplier": "Liaoning Kunze Industrial Group Co., Ltd",
+      "product_name": "Fruit Packaging Boxes Gift Box Packaging Custom Printed Corrugated Cardboard Cherry Fruit Packaging Boxes",
+      "price": "0.75",
+      "location": "China",
+      "score": 0.0333,
+      "constraint_violated": true
+    },
+    {
+      "rank": 9,
+      "supplier": "YongKang ZhuoTong Houseware Factory",
+      "product_name": "BPA free custom 7 days weekly pill box organizer",
+      "price": "1.65 - 2.00",
+      "location": "China",
+      "score": 0.0333,
+      "constraint_violated": true
+    },
+    {
+      "rank": 10,
+      "supplier": "Shenzhen Mellerio Package Co.,Limited",
+      "product_name": "Wholesame Factory Price high quality laminated paper and plastic bag for food",
+      "price": "0.05 - 0.20",
+      "location": "China",
+      "score": 0.0333,
+      "constraint_violated": true
+    }
+  ],
+  "top_supplier_feature_contribution": {
+    "price_match": 0.0017,
+    "price_ratio": 0.0012,
+    "location_match": -0.0039,
+    "cert_match": 0.075,
+    "faiss_score": 0.006
+  }
+}
