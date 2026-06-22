@@ -153,6 +153,16 @@ might systematically favour large metro suppliers.
 
 ---
 
+## System Architecture
+
+The diagram below is the architecture figure used in the IEEE paper. It traces a
+query end-to-end through candidate generation, constraint filtering, learning-to-rank,
+output, and the evaluation/analysis framework that surrounds the live pipeline.
+
+![SourceUp end-to-end architecture](IEEE_ARCHITECTURE.png)
+
+---
+
 ## How the Ranking Pipeline Works
 
 **SourceUp is fundamentally different from a search engine.** A search engine
@@ -198,31 +208,6 @@ SHAP Attribution       TreeExplainer decomposes each score into feature contribu
 Response               Ranked suppliers + SHAP breakdown + constraint violation tags
                         Warm-start latency: ~578 ms
 ```
-
-### What a Gaussian Is — and What a Supplier Feature Vector Is
-
-Gaussian Splatting stores scenes as explicit 3D primitives where every Gaussian
-has six learnable properties. SourceUp stores procurement knowledge as explicit
-feature vectors where every supplier-query pair has nine measurable signals.
-The parallel is intentional: both systems represent their domain explicitly
-rather than implicitly. You can inspect a Gaussian's position and opacity; you
-can inspect a feature vector's cert\_match and faiss\_score. Neither is a black
-box.
-
-| Gaussian property | Supplier feature analogue |
-|---|---|
-| Position (3D world space) | `faiss_score` (semantic distance to query) |
-| Opacity (contribution weight) | `price_match` (binary feasibility gate) |
-| Scale (spatial extent) | `price_ratio` (how much headroom exists) |
-| Rotation (orientation) | `cert_match` (directional compliance signal) |
-| SH colour (view-dependent) | `location_match` (context-dependent relevance) |
-| Densification (adaptive growth) | Hard-negative sampling (adaptive coverage) |
-
-Both systems learn by backpropagating a loss signal through all parameters. In
-Gaussian Splatting, the loss is photometric — how well does the rendered image
-match the ground truth photograph? In SourceUp, the loss is a listwise ranking
-objective — how well does the predicted supplier order match the relevance labels
-for this query group?
 
 ---
 
@@ -280,6 +265,9 @@ drop is the real signal. The learned model's +0.2747 improvement over the
 label-independent baseline at p < 0.001 is the primary evidence that
 learning-to-rank adds value over heuristics.
 
+![Baseline comparison](eval/plots/baseline_comparison_bar.png)
+![Per-query NDCG@10 across baselines](eval/plots/baseline_ndcg_per_query.png)
+
 ### Statistical Significance (Wilcoxon Signed-Rank, n=62 queries)
 
 | Comparison | Mean ΔNDCG@10 | p-value | Significant |
@@ -291,6 +279,8 @@ learning-to-rank adds value over heuristics.
 | vs. Legacy Rule-Based | −0.0115 | > 0.05 | ✗ (expected) |
 | vs. XGBoost LambdaMART | −0.0061 | > 0.05 | ✗ |
 | vs. LightGBM Regression | −0.0078 | > 0.05 | ✗ |
+
+![Statistical significance table](eval/plots/baseline_significance_table.png)
 
 ### Ablation Study
 
@@ -307,6 +297,10 @@ Removing semantic retrieval causes Kendall's τ to collapse from 0.5277 to 0.014
 NDCG impact is small (−0.0382) but its CVR impact is large (+21.1% relative).
 Both matter.
 
+![Ablation NDCG@10](eval/plots/ablation_ndcg_bar.png)
+![Ablation NDCG/CVR trade-off](eval/plots/ablation_tradeoff.png)
+![Ablation results table](eval/plots/ablation_table.png)
+
 ### Robustness
 
 | Label Noise Rate | NDCG@10 |
@@ -318,6 +312,22 @@ Both matter.
 Kendall's τ = 0.9505 under moderate score perturbation (σ = 0.03), 0.9016 at
 σ = 0.10. The system is stable.
 
+![NDCG@10 under label noise](eval/plots/label_noise_robustness.png)
+![Kendall's τ under score perturbation (boxplot)](eval/plots/stability_tau_boxplot.png)
+![Stability heatmap across perturbation regimes](eval/plots/stability_heatmap.png)
+![NDCG@10 under retrieval/score noise](eval/plots/stability_noise_curve.png)
+
+### Sensitivity
+
+γ (constraint penalty coefficient) was swept from 0 to 1, a constraint stress
+test was run across loose/medium/strict regimes, and cross-category generalisation
+was checked across query splits.
+
+![γ sweep, stress test, and generalisation (combined)](eval/plots/sensitivity_combined.png)
+![NDCG@10 across the γ sweep](eval/plots/sensitivity_gamma_curve.png)
+![Constraint stress test](eval/plots/sensitivity_stress_bar.png)
+![Cross-category generalisation](eval/plots/sensitivity_generalization.png)
+
 ### Fairness
 
 | Metric | Value | Interpretation |
@@ -327,6 +337,23 @@ Kendall's τ = 0.9505 under moderate score perturbation (σ = 0.03), 0.9016 at
 | Mann-Whitney p-value | 0.3084 | No significant score difference |
 | KS test p-value | 0.4522 | No significant distribution difference |
 | Counterfactual score change | 0.0000 | Flipping location tag → zero score change |
+
+![Supplier exposure by geographic tier](eval/plots/fairness_exposure_bar.png)
+![Disparate impact ratio curve](eval/plots/fairness_dir_curve.png)
+![Score distribution: Metro vs. Tier-2/3](eval/plots/fairness_score_distribution.png)
+![Counterfactual location-flip test](eval/plots/fairness_counterfactual.png)
+
+### SHAP Explainability
+
+![SHAP mean |value| summary](eval/plots/shap_summary_bar.png)
+![SHAP summary beeswarm](eval/plots/shap_summary_beeswarm.png)
+![SHAP feature correlation heatmap](eval/plots/shap_heatmap.png)
+![SHAP waterfall — single supplier decision](eval/plots/shap_waterfall.png)
+![SHAP force plot — top-ranked supplier](eval/plots/shap_force_top_supplier.png)
+![SHAP dependence — faiss_score](eval/plots/shap_dependence_faiss_score.png)
+![SHAP dependence — cert_match](eval/plots/shap_dependence_cert_match.png)
+![SHAP dependence — location_match](eval/plots/shap_dependence_location_match.png)
+![SHAP dependence — price_ratio](eval/plots/shap_dependence_price_ratio.png)
 
 ### Latency (Warm-Start, Models Resident in Memory)
 
@@ -341,6 +368,29 @@ Kendall's τ = 0.9505 under moderate score perturbation (σ = 0.03), 0.9016 at
 
 ---
 
+## Evaluation Artefacts
+
+Every figure above is generated by a corresponding script in `eval/` and backed
+by a raw CSV/JSON file, so every number in the README and the paper is
+reproducible end-to-end.
+
+| Artefact | Generated by | Raw data |
+|---|---|---|
+| Baseline comparison | `eval/baselines.py` | `eval/baseline_results.csv`, `eval/significance_results.csv` |
+| Ablation study | `eval/ablation.py` | `eval/ablation_results.csv` |
+| Stability / robustness | `eval/stability.py` | `eval/stability_results.csv`, `eval/stability_score_perturbation.csv`, `eval/stability_retrieval_noise.csv` |
+| Sensitivity (γ sweep, stress test, generalisation) | `eval/sensitivity.py` | `eval/sensitivity_gamma.csv`, `eval/sensitivity_stress.csv`, `eval/sensitivity_generalization.csv` |
+| Fairness | `eval/fairness.py` | `eval/fairness_results.csv` |
+| SHAP attribution | `eval/shap_analysis.py` | `eval/shap_values.csv`, `eval/shap_summary_statistics.csv` |
+| Label-noise robustness | `eval/label_noise_analysis.py` | `eval/label_noise_results.csv` |
+| Label/baseline overlap audit | `eval/check_label_baseline_overlap.py` | — |
+| Case study (Section RQ5) | `eval/case_study.py`, `eval/find_successful_case_study.py` | `eval/case_study.md`, `eval/case_study_success.md`, `eval/case_study.json`, `eval/case_study_candidates.json` |
+
+All generated plots live in `eval/plots/`; all generated tables live alongside
+the CSVs in `eval/`.
+
+---
+
 ## Repository Reading Guide
 
 If you are reviewing the project quickly, start here:
@@ -348,6 +398,7 @@ If you are reviewing the project quickly, start here:
 | Need | Read or run |
 |---|---|
 | Understand the full idea | This README: pipeline walkthrough, label-independence problem, honest evaluation |
+| See the architecture | `IEEE_ARCHITECTURE.png` (also embedded above) |
 | Run the full data pipeline | `python pipeline/run_all.py --full` |
 | Run evaluation | `python eval/baselines.py` → `eval/ablation.py` → `eval/fairness.py` → `eval/shap_analysis.py` |
 | Start the API | `uvicorn backend.app.main:app --reload --port 8000` |
@@ -440,12 +491,16 @@ If you are reviewing the project quickly, start here:
 └───────────────────────────────────────────────────────────────────┘
 ```
 
+A rendered, IEEE-paper version of this same pipeline is shown in
+[System Architecture](#system-architecture) above.
+
 ---
 
 ## Codebase Structure
 
 ```
 SourceUp/
+├── IEEE_ARCHITECTURE.png       # End-to-end architecture figure used in the paper
 ├── backend/
 │   └── app/
 │       ├── api/
@@ -516,8 +571,12 @@ SourceUp/
 │   ├── shap_analysis.py            # Summary bar / beeswarm / waterfall / dependence plots
 │   ├── label_noise_analysis.py     # NDCG under 0–40% label corruption
 │   ├── case_study.py               # End-to-end case study runner
+│   ├── find_successful_case_study.py  # Search for a fully-feasible case-study query
 │   ├── check_label_baseline_overlap.py  # Audits signal overlap between labeller and baseline
-│   └── plots/                      # All generated evaluation figures
+│   ├── dataset_diagnostic.py       # Dataset sanity checks
+│   ├── verify_location_match.py    # Location-match field verification
+│   ├── *.csv / *.json / *.md       # Generated evaluation results and case studies
+│   └── plots/                      # All generated evaluation figures (PNG)
 ├── evaluation/
 │   └── metrics.py                  # NDCG@k, MAP, MRR, P@k, Kendall τ, CVR
 ├── rule_baseline.py                # Label-independent rule-based scorer
@@ -922,7 +981,8 @@ python eval/case_study.py           # End-to-end case study: hard + soft constra
 python eval/check_label_baseline_overlap.py  # Audit signal overlap between labeller and baselines
 ```
 
-Outputs: CSVs in `data/eval/`, PNGs in `data/eval/plots/`.
+Outputs: CSVs/JSON/Markdown in `eval/`, PNGs in `eval/plots/` (see
+[Evaluation Artefacts](#evaluation-artefacts) for the full mapping).
 
 ---
 
@@ -983,6 +1043,10 @@ SHAP attribution for the top result:
 With location as a soft preference, semantic similarity takes over as the
 dominant driver. The absence of a location match is still reported in the trace
 rather than concealed — the buyer knows the top result is not in Mumbai.
+
+Full write-ups, including the search for the most representative cases, live in
+`eval/case_study.md` and `eval/case_study_success.md`, with the raw candidate
+pools in `eval/case_study.json` and `eval/case_study_candidates.json`.
 
 ---
 
