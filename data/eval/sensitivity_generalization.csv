@@ -1,0 +1,4 @@
+Split,Train n,Test n,NDCG@10,P@5,Kendall-τ
+Train A → Test B,11625,11550,0.8707,0.7961,0.5293
+Train B → Test A,11550,11625,0.8595,0.7854,0.5058
+In-Distribution (80/20),18525,4650,0.868,0.7738,0.5281

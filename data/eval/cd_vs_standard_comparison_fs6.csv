@@ -1,0 +1,2 @@
+Model,NDCG@10,NDCG@5,P@5,MAP,Kendall_tau,feature_set
+Standard LambdaRank,0.8704,0.8714,0.8393,0.7547,0.5374,6

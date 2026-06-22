@@ -1,0 +1,8 @@
+Baseline,Mean ΔNDCG,p-value,Significant,n queries
+B1: BM25,0.3783,0.0,Yes (p<0.05),62
+B2: SBERT Cosine,0.3659,0.0,Yes (p<0.05),62
+B3: Rule-Based,-0.0115,0.9999,No,62
+B3b: Rule-Based (independent),0.2747,0.0,Yes (p<0.05),62
+B4: Random,0.3665,0.0,Yes (p<0.05),62
+A1: XGBoost LambdaMART,-0.0061,0.9775,No,62
+A2: LightGBM Regression,-0.0078,0.9932,No,62

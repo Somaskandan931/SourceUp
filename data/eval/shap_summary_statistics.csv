@@ -1,0 +1,6 @@
+Feature,Mean SHAP,Mean |SHAP|,Std SHAP,Rank (Impact)
+Semantic Similarity (SBERT),-0.49211,0.65131,0.56499,1
+Location Match,-0.06542,0.07802,0.10032,2
+Certification Match,-0.02114,0.03383,0.07079,3
+Price / Budget Ratio,-0.00527,0.02824,0.0307,4
+Price Within Budget,-0.00364,0.01446,0.05258,5

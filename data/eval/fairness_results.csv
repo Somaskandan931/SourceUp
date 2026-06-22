@@ -1,0 +1,2 @@
+exposure_ratio_tier2_vs_metro,score_mean_metro,score_mean_tier2,score_diff_mw_p,dir_at_k10,counterfactual_mean_delta,counterfactual_fair
+1.0099,-0.031,-0.0303,0.3084,0.9314,0.0,True
